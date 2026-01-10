@@ -466,29 +466,44 @@ for e = 1:n_elems
         sigma_zz = 0;
     end
 
+    sxx = stress(e, 1);
+    syy = stress(e, 2);
+    sxy = stress(e, 3);
+    szz = sigma_zz;
+
+    vonMises(e) = sqrt(0.5 * ((sxx-syy)^2 + (syy-szz)^2 + (szz-sxx)^2 + ...
+                              6 * sxy^2));
+
+    if strcmp(analysis_type, 'plane_strain')
+        sigma_avg = (sxx + syy) / 2;
+        R = sqrt(((sxx - syy)/2)^2 + sxy^2);
+        sigma1_2D = sigma_avg + R;
+        sigma2_2D = sigma_avg - R;
+
+        principal(e, :) = sort([sigma1_2D, sigma2_2D, sigma_zz], 'descend');
+    else
+        sigma_avg = (sxx + syy) / 2;
+        R = sqrt(((sxx - syy)/2)^2 + sxy^2);
+        sigma1 = sigma_avg + R;
+        sigma2 = sigma_avg - R;
+        sigma3 = 0;
+        
+        principal(e, :) = [sigma1, sigma2, sigma3];
+    end
+end
+
+fprintf('\n  应力统计:\n');
+fprintf('    最大σ_xx: %.4e Pa\n', max(stress(:,1)));
+fprintf('    最大σ_yy: %.4e Pa\n', max(stress(:,2)));
+fprintf('    最大τ_xy: %.4e Pa\n', max(abs(stress(:,3))));
+fprintf('    最大Mises应力: %.4e Pa\n', max(vonMises));
+if strcmp(analysis_type, 'plane_strain')
+    fprintf('    最大σ_zz: %.4e Pa\n', nu * max(stress(:,1) + stress(:,2)));
+end
+
 
 
 fprintf('\n组装刚度矩阵和载荷向量...\n');
-
-n_nodes = size(nodes, 1);
-n_dofs = 2 * n_nodes;
-K = sparse(n_dofs, n_dofs);
-F = sparse(n_dofs, 1);
-
-fprintf('  处理单元...\n');
-for e = 1:size(elems, 1)
-    elem_nodes = elems(e, :);
-    
-    node_coords = nodes(elem_nodes, :);
-    
-    [Ke, Fe] = computeQ4Element(E, nu, thickness, node_coords);
-    
-    dof_indices = getDofIndices(elem_nodes);
-    K(dof_indices, dof_indices) = K(dof_indices, dof_indices) + Ke;
-    F(dof_indices) = F(dof_indices) + Fe;
-end
-
-if ~isempty(neumann_edges)
 
 fprintf('\n生成可视化结果...\n');
 plotResults(nodes, elems, displacements, element_stresses, vonMises);
