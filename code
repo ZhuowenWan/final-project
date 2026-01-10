@@ -593,6 +593,58 @@ end
 fclose(fid);
 fprintf('  应力结果已保存为 FEM_stresses.csv\n');
 
+fid = fopen('FEM_summary.txt', 'w');
+fprintf(fid, '=========================================\n');
+fprintf(fid, '       平面弹性有限元分析报告\n');
+fprintf(fid, '=========================================\n\n');
+
+fprintf(fid, '分析类型: %s\n', analysis_type);
+fprintf(fid, '网格文件: %s\n', mesh_file);
+fprintf(fid, '\n材料参数:\n');
+fprintf(fid, '  弹性模量 E = %.2e Pa\n', E);
+fprintf(fid, '  泊松比 ν = %.2f\n', nu);
+if strcmp(analysis_type, 'plane_stress')
+    fprintf(fid, '  厚度 t = %.3f m\n', thickness);
+end
+
+fprintf(fid, '\n网格信息:\n');
+fprintf(fid, '  节点数: %d\n', n_nodes);
+fprintf(fid, '  单元数: %d\n', n_elems);
+
+fprintf(fid, '\n边界条件:\n');
+fprintf(fid, '  固定边界: %s (%d个约束自由度)\n', fixed_boundary, length(dirichlet_dofs));
+if apply_traction
+    fprintf(fid, '  加载边界: %s (面力: %.2e %s)\n', loaded_boundary, traction_value, ...
+        strcmp(analysis_type, 'plane_stress') ? 'Pa' : 'N/m');
+end
+
+fprintf(fid, '\n位移结果:\n');
+fprintf(fid, '  最大x位移: %.4e m\n', max(abs(Ux)));
+fprintf(fid, '  最大y位移: %.4e m\n', max(abs(Uy)));
+fprintf(fid, '  最大总位移: %.4e m\n', max(U_mag));
+fprintf(fid, '  平均位移: %.4e m\n', mean(U_mag));
+
+fprintf(fid, '\n应力结果:\n');
+fprintf(fid, '  最大σ_xx: %.4e Pa\n', max(stress(:,1)));
+fprintf(fid, '  最大σ_yy: %.4e Pa\n', max(stress(:,2)));
+fprintf(fid, '  最大τ_xy: %.4e Pa\n', max(abs(stress(:,3))));
+fprintf(fid, '  最大Mises应力: %.4e Pa\n', max(vonMises));
+if strcmp(analysis_type, 'plane_strain')
+    fprintf(fid, '  最大σ_zz: %.4e Pa\n', nu * max(stress(:,1) + stress(:,2)));
+end
+
+fprintf(fid, '\n生成文件:\n');
+fprintf(fid, '  FEM_results_complete.png - 结果图形\n');
+fprintf(fid, '  FEM_displacements.csv   - 节点位移数据\n');
+fprintf(fid, '  FEM_stresses.csv        - 单元应力数据\n');
+fprintf(fid, '  FEM_summary.txt         - 分析报告\n');
+
+fprintf(fid, '\n分析完成时间: %s\n', datestr(now));
+fprintf(fid, '=========================================\n');
+fclose(fid);
+
+fprintf('  总结报告保存为 FEM_summary.txt\n');
+
 
 
 fprintf('\n组装刚度矩阵和载荷向量...\n');
