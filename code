@@ -122,18 +122,53 @@ while ~feof(fid)
             continue;
         end
 
-[coordinates, elements, nodesets, edgesets] = readGmshMesh(mesh_file);
-[nodes, elems, boundary] = processMesh(coordinates, elements, nodesets, edgesets);
+        data = sscanf(line, '%f');
+        if ~isempty(data)
+            elem_id = data(1);
+            elem_type = data(2);
+            n_tags = data(3);
 
-fprintf('  节点数: %d\n', size(nodes, 1));
-fprintf('  单元数: %d\n', size(elems, 1));
+            tag_start = 4;
+            node_start = tag_start + n_tags;
 
-fprintf('\n设置边界条件:\n');
+            if elem_type == 3 
+                nodes = data(node_start:end)';
+                elements{elem_id} = nodes;
 
-fprintf('  Dirichlet边界: ');
-dirichlet_nodes = [];
-dirichlet_dofs = [];
-dirichlet_values = [];
+                if n_tags >= 2
+                    phys_group = data(5);
+                    group_name = sprintf('group%d', phys_group);
+                    if ~isfield(edgesets, group_name)
+                        edgesets.(group_name) = [];
+                    end
+                    edgesets.(group_name) = [edgesets.(group_name); elem_id];
+                end
+            elseif elem_type == 2 
+                nodes = data(node_start:end)';
+                elements{elem_id} = nodes;
+            end
+        end
+    end
+end
+
+fclose(fid);
+
+valid_elems = ~cellfun('isempty', elements);
+element_ids = find(valid_elems);
+elems = zeros(length(element_ids), 4);
+for i = 1:length(element_ids)
+    elems(i, :) = elements{element_ids(i)};
+end
+
+nodes = coordinates(:, 1:2);
+
+fprintf('  网格信息:\n');
+fprintf('    节点数: %d\n', size(nodes, 1));
+fprintf('    单元数: %d\n', size(elems, 1));
+fprintf('    坐标范围: x ∈ [%.3f, %.3f], y ∈ [%.3f, %.3f]\n', ...
+    min(nodes(:,1)), max(nodes(:,1)), min(nodes(:,2)), max(nodes(:,2)));
+
+
 
 if isfield(boundary, 'left')
     left_nodes = boundary.left;
