@@ -320,6 +320,58 @@ for e = 1:size(elems, 1)
 
     end
 
+    dof_indices = zeros(8, 1);
+    for j = 1:4
+        dof_indices(2*j-1) = 2*elem_nodes(j) - 1;
+        dof_indices(2*j)   = 2*elem_nodes(j);
+    end
+    
+    K(dof_indices, dof_indices) = K(dof_indices, dof_indices) + Ke;
+    F(dof_indices) = F(dof_indices) + Fe;
+end
+
+fprintf('  单元处理完成\n');
+
+if ~isempty(neumann_edges)
+    fprintf('\n  施加面力边界条件...\n');
+
+    if strcmp(analysis_type, 'plane_stress')
+        thickness_factor = thickness;
+    else
+        thickness_factor = 1.0;
+    end
+
+    for i = 1:size(neumann_edges, 1)
+        node1 = neumann_edges(i, 1);
+        node2 = neumann_edges(i, 2);
+
+        x1 = nodes(node1, :);
+        x2 = nodes(node2, :);
+
+        edge_vec = x2 - x1;
+        edge_length = norm(edge_vec);
+
+        t = edge_vec / edge_length;
+        n = [t(2), -t(1)];
+
+        traction = neumann_tractions(:, i);
+
+        fx = traction(1) * n(1) + traction(2) * n(2);
+        fy = traction(1) * n(2) - traction(2) * n(1);
+
+        f_total = [fx; fy] * edge_length * thickness_factor;
+        f_node = f_total / 2;
+
+        dof1 = [2*node1-1, 2*node1];
+        dof2 = [2*node2-1, 2*node2];
+        
+        F(dof1) = F(dof1) + f_node;
+        F(dof2) = F(dof2) + f_node;
+    end
+    
+    fprintf('    处理了 %d 条边\n', size(neumann_edges, 1));
+end
+
 
 
 fprintf('\n组装刚度矩阵和载荷向量...\n');
@@ -343,26 +395,6 @@ for e = 1:size(elems, 1)
 end
 
 if ~isempty(neumann_edges)
-    fprintf('  施加Neumann边界条件...\n');
-    F = applyNeumannBC(F, nodes, neumann_edges, neumann_tractions, thickness);
-end
-
-fprintf('\n施加Dirichlet边界条件...\n');
-[K_mod, F_mod] = applyDirichletBC(K, F, dirichlet_dofs, dirichlet_values);
-
-fprintf('\n求解线性系统...\n');
-U = K_mod \ F_mod;
-
-displacements = reshape(U, 2, n_nodes)';
-Ux = displacements(:, 1);
-Uy = displacements(:, 2);
-
-fprintf('  最大位移: Ux_max = %.2e m, Uy_max = %.2e m\n', ...
-    max(abs(Ux)), max(abs(Uy)));
-
-fprintf('\n计算单元应力和应变...\n');
-[element_stresses, element_strains, vonMises] = ...
-    computeStressStrain(nodes, elems, displacements, E, nu);
 
 fprintf('\n生成可视化结果...\n');
 plotResults(nodes, elems, displacements, element_stresses, vonMises);
