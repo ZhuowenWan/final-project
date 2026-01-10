@@ -1,0 +1,102 @@
+fprintf('=== 平面弹性问题有限元求解 ===\n');
+
+E = 210e9;
+nu = 0.3;
+thickness = 0.01;
+
+D = (E/(1-nu^2)) * [1, nu, 0; nu, 1, 0; 0, 0, (1-nu)/2];
+
+fprintf('材料参数: E = %.2e Pa, ν = %.2f, t = %.3f m\n', E, nu, thickness);
+
+mesh_file = 'plate_with_hole.msh';
+fprintf('读取网格文件: %s\n', mesh_file);
+
+[coordinates, elements, nodesets, edgesets] = readGmshMesh(mesh_file);
+[nodes, elems, boundary] = processMesh(coordinates, elements, nodesets, edgesets);
+
+fprintf('  节点数: %d\n', size(nodes, 1));
+fprintf('  单元数: %d\n', size(elems, 1));
+
+fprintf('\n设置边界条件:\n');
+
+fprintf('  Dirichlet边界: ');
+dirichlet_nodes = [];
+dirichlet_dofs = [];
+dirichlet_values = [];
+
+if isfield(boundary, 'left')
+    left_nodes = boundary.left;
+    fprintf('左边界 (%d个节点) - 完全固定\n', length(left_nodes));
+    
+    for i = 1:length(left_nodes)
+        node = left_nodes(i);
+        dirichlet_nodes = [dirichlet_nodes; node];
+        dirichlet_dofs = [dirichlet_dofs; node*2-1; node*2];
+        dirichlet_values = [dirichlet_values; 0; 0];
+    end
+end
+
+fprintf('  Neumann边界: ');
+neumann_edges = [];
+neumann_tractions = [];
+
+if isfield(boundary, 'right')
+    right_edges = boundary.right;
+    fprintf('右边界 (%d条边) - 施加拉力\n', length(right_edges));
+    
+    traction = [1e6; 0];  % [tx; ty] (Pa)
+    
+    for i = 1:length(right_edges)
+        neumann_edges = [neumann_edges; right_edges(i, :)];
+        neumann_tractions = [neumann_tractions; traction];
+    end
+end
+
+fprintf('\n组装刚度矩阵和载荷向量...\n');
+
+n_nodes = size(nodes, 1);
+n_dofs = 2 * n_nodes;
+K = sparse(n_dofs, n_dofs);
+F = sparse(n_dofs, 1);
+
+fprintf('  处理单元...\n');
+for e = 1:size(elems, 1)
+    elem_nodes = elems(e, :);
+    
+    node_coords = nodes(elem_nodes, :);
+    
+    [Ke, Fe] = computeQ4Element(E, nu, thickness, node_coords);
+    
+    dof_indices = getDofIndices(elem_nodes);
+    K(dof_indices, dof_indices) = K(dof_indices, dof_indices) + Ke;
+    F(dof_indices) = F(dof_indices) + Fe;
+end
+
+if ~isempty(neumann_edges)
+    fprintf('  施加Neumann边界条件...\n');
+    F = applyNeumannBC(F, nodes, neumann_edges, neumann_tractions, thickness);
+end
+
+fprintf('\n施加Dirichlet边界条件...\n');
+[K_mod, F_mod] = applyDirichletBC(K, F, dirichlet_dofs, dirichlet_values);
+
+fprintf('\n求解线性系统...\n');
+U = K_mod \ F_mod;
+
+displacements = reshape(U, 2, n_nodes)';
+Ux = displacements(:, 1);
+Uy = displacements(:, 2);
+
+fprintf('  最大位移: Ux_max = %.2e m, Uy_max = %.2e m\n', ...
+    max(abs(Ux)), max(abs(Uy)));
+
+fprintf('\n计算单元应力和应变...\n');
+[element_stresses, element_strains, vonMises] = ...
+    computeStressStrain(nodes, elems, displacements, E, nu);
+
+fprintf('\n生成可视化结果...\n');
+plotResults(nodes, elems, displacements, element_stresses, vonMises);
+
+outputResults(nodes, displacements, element_stresses, vonMises);
+
+fprintf('\n=== 求解完成 ===\n');
