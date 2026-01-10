@@ -501,6 +501,42 @@ if strcmp(analysis_type, 'plane_strain')
     fprintf('    最大σ_zz: %.4e Pa\n', nu * max(stress(:,1) + stress(:,2)));
 end
 
+fprintf('\n--- 生成可视化结果 ---\n');
+
+figure('Position', [50, 50, 1400, 900], 'Name', '有限元分析结果', 'NumberTitle', 'off');
+
+max_disp = max(U_mag);
+if max_disp > 0
+    scale_factor = 0.1 * max(range(nodes)) / max_disp;
+else
+    scale_factor = 1;
+end
+deformed_nodes = nodes + displacements * scale_factor;
+
+subplot(2, 3, 1);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceColor', 'none', 'EdgeColor', 'b', 'LineWidth', 0.5);
+title('原始网格', 'FontSize', 12, 'FontWeight', 'bold');
+xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+axis equal tight; grid on;
+if ~isempty(fixed_boundary) && isfield(boundary, fixed_boundary)
+    hold on;
+    fixed_edges = boundary.(fixed_boundary);
+    for i = 1:size(fixed_edges, 1)
+        plot(nodes(fixed_edges(i,:), 1), nodes(fixed_edges(i,:), 2), ...
+             'r-', 'LineWidth', 3);
+    end
+    legend('网格', '固定边界', 'Location', 'best');
+end
+
+subplot(2, 3, 2);
+patch('Faces', elems, 'Vertices', deformed_nodes, ...
+      'FaceColor', 'none', 'EdgeColor', 'r', 'LineWidth', 0.5);
+title(sprintf('变形网格 (放大 %.1f 倍)', scale_factor), ...
+      'FontSize', 12, 'FontWeight', 'bold');
+xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+axis equal tight; grid on;
+
 
 
 fprintf('\n组装刚度矩阵和载荷向量...\n');
