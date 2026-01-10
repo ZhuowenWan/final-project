@@ -564,13 +564,31 @@ axis equal tight; grid on;
 subplot(2, 3, 6);
 patch('Faces', elems, 'Vertices', nodes, ...
       'FaceVertexCData', stress(:,1), 'FaceColor', 'flat', 'EdgeColor', 'none');
-colorbar('southoutside');
-title('应力 \sigma_{xx} (Pa)', 'FontSize', 12, 'FontWeight', 'bold');
-xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+colorbar;
+title('正应力 \sigma_{xx} (Pa)', 'FontSize', 11, 'FontWeight', 'bold');
+xlabel('x (m)'); ylabel('y (m)');
+axis equal tight; grid on;
+
+subplot(2, 3, 7);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceVertexCData', stress(:,2), 'FaceColor', 'flat', 'EdgeColor', 'none');
+colorbar;
+title('正应力 \sigma_{yy} (Pa)', 'FontSize', 11, 'FontWeight', 'bold');
+xlabel('x (m)'); ylabel('y (m)');
+axis equal tight; grid on;
+
+subplot(2, 3, 8);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceVertexCData', stress(:,3), 'FaceColor', 'flat', 'EdgeColor', 'none');
+colorbar;
+title('剪应力 \tau_{xy} (Pa)', 'FontSize', 11, 'FontWeight', 'bold');
+xlabel('x (m)'); ylabel('y (m)');
 axis equal tight; grid on;
 
 saveas(gcf, 'FEM_results_complete.png');
 fprintf('  图形已保存为 FEM_results_complete.png\n');
+
+
 
 fprintf('\n--- 输出结果文件 ---\n');
 
