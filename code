@@ -197,19 +197,38 @@ for i = 1:length(field_names)
     end
 end
 
+fprintf('\n--- 设置边界条件 ---\n');
 
+dirichlet_dofs = [];
+dirichlet_values = [];
+neumann_edges = [];
+neumann_tractions = [];
 
-if isfield(boundary, 'left')
-    left_nodes = boundary.left;
-    fprintf('左边界 (%d个节点) - 完全固定\n', length(left_nodes));
+if isfield(boundary, fixed_boundary)
+    fixed_edges = boundary.(fixed_boundary);
+
+    fixed_nodes = unique(fixed_edges(:));
     
-    for i = 1:length(left_nodes)
-        node = left_nodes(i);
-        dirichlet_nodes = [dirichlet_nodes; node];
+    fprintf('  Dirichlet边界 (%s):\n', fixed_boundary);
+    fprintf('    节点数: %d\n', length(fixed_nodes));
+
+    for i = 1:length(fixed_nodes)
+        node = fixed_nodes(i);
         dirichlet_dofs = [dirichlet_dofs; node*2-1; node*2];
         dirichlet_values = [dirichlet_values; 0; 0];
     end
+    fprintf('    约束: ux = 0, uy = 0\n');
+else
+    fprintf(' 未找到固定边界 "%s"\n', fixed_boundary);
 end
+
+if apply_traction && isfield(boundary, loaded_boundary)
+    loaded_edges = boundary.(loaded_boundary);
+    
+    fprintf('  Neumann边界 (%s):\n', loaded_boundary);
+    fprintf('    边数: %d\n', size(loaded_edges, 1));
+
+
 
 fprintf('  Neumann边界: ');
 neumann_edges = [];
