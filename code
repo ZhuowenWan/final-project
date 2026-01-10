@@ -658,7 +658,46 @@ if calculate_errors && manufactured_solution
         end
     end
 
+  L2_error = sqrt(L2_error_sq);
+    L2_norm_exact = sqrt(L2_norm_exact_sq);
+    relative_L2_error = L2_error / L2_norm_exact;
+    
+    H1_error = sqrt(H1_error_sq);
+    H1_norm_exact = sqrt(H1_norm_exact_sq);
+    relative_H1_error = H1_error / H1_norm_exact;
 
+    fprintf('\n  === 误差分析结果 ===\n');
+    fprintf('  绝对L₂误差: %.4e\n', L2_error);
+    fprintf('  相对L₂误差: %.4e (%.4f%%)\n', relative_L2_error, relative_L2_error*100);
+    fprintf('  绝对H₁误差: %.4e\n', H1_error);
+    fprintf('  相对H₁误差: %.4e (%.4f%%)\n', relative_H1_error, relative_H1_error*100);
+    fprintf('  精确解L₂范数: %.4e\n', L2_norm_exact);
+    fprintf('  精确解H₁范数: %.4e\n', H1_norm_exact);
+
+    h_max = 0;
+    h_min = inf;
+    for e = 1:n_elems
+        elem_nodes = elems(e, :);
+        elem_coords = nodes(elem_nodes, :);
+
+        for i = 1:length(elem_nodes)
+            for j = i+1:length(elem_nodes)
+                dist = norm(elem_coords(i,:) - elem_coords(j,:));
+                h_max = max(h_max, dist);
+                h_min = min(h_min, dist);
+            end
+        end
+    end
+    
+    fprintf('  网格尺寸: h_max = %.4f, h_min = %.4f\n', h_max, h_min);
+    fprintf('  收敛率估计:\n');
+    fprintf('    L₂误差应约为 O(h^2) ≈ %.4e\n', h_max^2);
+    fprintf('    H₁误差应约为 O(h^1) ≈ %.4e\n', h_max);
+
+    fid = fopen('FEM_error_analysis.txt', 'w');
+    fprintf(fid, '=========================================\n');
+    fprintf(fid, '       有限元误差分析报告\n');
+    fprintf(fid, '=========================================\n\n');
 
 fprintf('\n--- 输出结果文件 ---\n');
 
