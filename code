@@ -93,12 +93,34 @@ while ~feof(fid)
             element_section_started = true;
             node_section_started = false;
         elseif strcmp(section, 'EndNodes') || strcmp(section, 'EndElements')
-            % 节结束
             node_section_started = false;
             element_section_started = false;
         end
         continue;
     end
+
+    if node_section_started
+        if isempty(coordinates)
+            n_nodes = str2double(line);
+            coordinates = zeros(n_nodes, 3);
+            node_counter = 1;
+            continue;
+        end
+
+        data = sscanf(line, '%f');
+        if length(data) >= 4
+            node_id = data(1);
+            coordinates(node_id, :) = data(2:4);
+            node_counter = node_counter + 1;
+        end
+
+    elseif element_section_started
+        if isempty(elements)
+            n_elems = str2double(line);
+            elements = cell(n_elems, 1);
+            element_counter = 1;
+            continue;
+        end
 
 [coordinates, elements, nodesets, edgesets] = readGmshMesh(mesh_file);
 [nodes, elems, boundary] = processMesh(coordinates, elements, nodesets, edgesets);
