@@ -403,6 +403,69 @@ end
 
 fprintf('  边界条件处理完成\n');
 
+fprintf('\n--- 求解线性系统 ---\n');
+
+fprintf('  求解 %d×%d 稀疏线性系统...\n', n_dofs, n_dofs);
+
+U = K_mod \ F_mod;
+
+displacements = reshape(U, 2, n_nodes)';
+Ux = displacements(:, 1);
+Uy = displacements(:, 2);
+U_mag = sqrt(Ux.^2 + Uy.^2);
+
+fprintf('\n  位移统计:\n');
+fprintf('    最大x位移: %.4e m (节点 %d)\n', max(abs(Ux)), find(abs(Ux) == max(abs(Ux)), 1));
+fprintf('    最大y位移: %.4e m (节点 %d)\n', max(abs(Uy)), find(abs(Uy) == max(abs(Uy)), 1));
+fprintf('    最大总位移: %.4e m (节点 %d)\n', max(U_mag), find(U_mag == max(U_mag), 1));
+fprintf('    平均位移: %.4e m\n', mean(U_mag));
+
+fprintf('\n--- 计算应力和应变 ---\n');
+
+n_elems = size(elems, 1);
+stress = zeros(n_elems, 3);      % [σ_xx, σ_yy, τ_xy]
+strain = zeros(n_elems, 3);      % [ε_xx, ε_yy, γ_xy]
+vonMises = zeros(n_elems, 1);
+principal = zeros(n_elems, 3);   % [σ1, σ2, σ3]
+
+fprintf('  计算 %d 个单元的应力应变...\n', n_elems);
+
+for e = 1:n_elems
+    elem_nodes = elems(e, :);
+    node_coords = nodes(elem_nodes, :);
+    elem_disp = displacements(elem_nodes, :);
+    
+    xi = 0; eta = 0;
+    
+    [~, dN_dxi, dN_deta] = Q4_shape(xi, eta);
+
+    J = [dN_dxi' * node_coords(:,1), dN_dxi' * node_coords(:,2);
+         dN_deta' * node_coords(:,1), dN_deta' * node_coords(:,2)];
+    invJ = inv(J);
+
+    dN_dx = invJ(1,1)*dN_dxi + invJ(1,2)*dN_deta;
+    dN_dy = invJ(2,1)*dN_dxi + invJ(2,2)*dN_deta;
+
+    B = zeros(3, 8);
+    for j = 1:4
+        B(1, 2*j-1) = dN_dx(j);
+        B(2, 2*j)   = dN_dy(j);
+        B(3, 2*j-1) = dN_dy(j);
+        B(3, 2*j)   = dN_dx(j);
+    end
+
+    u_vec = reshape(elem_disp', 8, 1);
+
+    strain(e, :) = (B * u_vec)';
+
+    stress(e, :) = (D * strain(e, :)')';
+
+    if strcmp(analysis_type, 'plane_strain')
+        sigma_zz = nu * (stress(e,1) + stress(e,2));
+    else
+        sigma_zz = 0;
+    end
+
 
 
 fprintf('\n组装刚度矩阵和载荷向量...\n');
