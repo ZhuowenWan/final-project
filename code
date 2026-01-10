@@ -267,6 +267,59 @@ fprintf('  处理单元...\n');
 
 progress_interval = max(1, floor(size(elems, 1)/10));
 
+for e = 1:size(elems, 1)
+    if mod(e, progress_interval) == 0
+        fprintf('    %d/%d (%.0f%%)\n', e, size(elems, 1), e/size(elems, 1)*100);
+    end
+
+    elem_nodes = elems(e, :);
+    node_coords = nodes(elem_nodes, :);
+
+    Ke = zeros(8, 8);
+    Fe = zeros(8, 1);
+
+    for g = 1:4
+        xi = gauss_points(g, 1);
+        eta = gauss_points(g, 2);
+
+        [N, dN_dxi, dN_deta] = Q4_shape(xi, eta);
+
+        dx_dxi = dN_dxi' * node_coords(:,1);
+        dy_dxi = dN_dxi' * node_coords(:,2);
+        dx_deta = dN_deta' * node_coords(:,1);
+        dy_deta = dN_deta' * node_coords(:,2);
+        
+        J = [dx_dxi, dy_dxi; dx_deta, dy_deta];
+        detJ = det(J);
+        
+        if detJ <= 0
+            warning('单元 %d 的雅可比行列式为负或零: detJ = %.2e', e, detJ);
+            detJ = abs(detJ);
+        end
+        
+        invJ = inv(J);
+
+        dN_dx = invJ(1,1)*dN_dxi + invJ(1,2)*dN_deta;
+        dN_dy = invJ(2,1)*dN_dxi + invJ(2,2)*dN_deta;
+
+        B = zeros(3, 8);
+        for j = 1:4
+            B(1, 2*j-1) = dN_dx(j);    % ε_xx
+            B(2, 2*j)   = dN_dy(j);    % ε_yy
+            B(3, 2*j-1) = dN_dy(j);    % γ_xy
+            B(3, 2*j)   = dN_dx(j);
+        end
+
+        if strcmp(analysis_type, 'plane_stress')
+            thickness_factor = thickness;
+        else
+            thickness_factor = 1.0;
+        end
+
+        Ke = Ke + B' * D * B * detJ * thickness_factor * gauss_weights(g);
+
+    end
+
 
 
 fprintf('\n组装刚度矩阵和载荷向量...\n');
