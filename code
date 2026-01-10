@@ -65,6 +65,41 @@ if fid == -1
     error('无法打开文件: %s', mesh_file);
 end
 
+coordinates = [];
+elements = [];
+nodesets = struct();
+edgesets = struct();
+
+section = '';
+line_count = 0;
+node_section_started = false;
+element_section_started = false;
+
+while ~feof(fid)
+    line = fgetl(fid);
+    line_count = line_count + 1;
+    
+    if isempty(line)
+        continue;
+    end
+
+    if strcmp(line(1), '$')
+        section = line(2:end);
+        
+        if strcmp(section, 'Nodes')
+            node_section_started = true;
+            element_section_started = false;
+        elseif strcmp(section, 'Elements')
+            element_section_started = true;
+            node_section_started = false;
+        elseif strcmp(section, 'EndNodes') || strcmp(section, 'EndElements')
+            % 节结束
+            node_section_started = false;
+            element_section_started = false;
+        end
+        continue;
+    end
+
 [coordinates, elements, nodesets, edgesets] = readGmshMesh(mesh_file);
 [nodes, elems, boundary] = processMesh(coordinates, elements, nodesets, edgesets);
 
