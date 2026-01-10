@@ -1,8 +1,26 @@
-fprintf('=== 平面弹性问题有限元求解 ===\n');
+fprintf('=========================================\n');
+fprintf('   平面弹性有限元分析 \n');
+fprintf('=========================================\n\n');
 
 E = 210e9;
 nu = 0.3;
 thickness = 0.01;
+
+fprintf('选择分析类型:\n');
+fprintf('  1. 平面应力 (plane stress) - 适用于薄板结构\n');
+fprintf('  2. 平面应变 (plane strain) - 适用于厚结构或长柱体\n');
+choice = input('输入选择 (1 或 2, 默认1): ');
+
+if isempty(choice) || choice == 1
+    analysis_type = 'plane_stress';
+    fprintf('  已选择: 平面应力\n');
+elseif choice == 2
+    analysis_type = 'plane_strain';
+    fprintf('  已选择: 平面应变\n');
+else
+    fprintf('  无效选择，使用默认值: 平面应力\n');
+    analysis_type = 'plane_stress';
+end
 
 D = (E/(1-nu^2)) * [1, nu, 0; nu, 1, 0; 0, 0, (1-nu)/2];
 
@@ -100,3 +118,4 @@ plotResults(nodes, elems, displacements, element_stresses, vonMises);
 outputResults(nodes, displacements, element_stresses, vonMises);
 
 fprintf('\n=== 求解完成 ===\n');
+
