@@ -588,6 +588,76 @@ axis equal tight; grid on;
 saveas(gcf, 'FEM_results_complete.png');
 fprintf('  图形已保存为 FEM_results_complete.png\n');
 
+fprintf('\n--- 计算L₂和H₁范数误差 ---\n');
+
+if calculate_errors && manufactured_solution
+    fprintf('  误差计算...\n');
+
+    L2_error_sq = 0;
+    H1_error_sq = 0;
+    L2_norm_exact_sq = 0;
+    H1_norm_exact_sq = 0;
+
+    for e = 1:n_elems
+        elem_nodes = elems(e, :);
+        elem_coords = nodes(elem_nodes, :);
+        elem_disp = displacements(elem_nodes, :);
+
+        [quad_points, quad_weights] = getQuadraturePoints(4);
+        
+        for q = 1:length(quad_weights)
+            xi = quad_points(q, 1);
+            eta = quad_points(q, 2);
+
+            N = 0.25 * [(1-xi)*(1-eta); (1+xi)*(1-eta); (1+xi)*(1+eta); (1-xi)*(1+eta)];
+
+            dN_dxi = 0.25 * [-(1-eta); (1-eta); (1+eta); -(1+eta)];
+            dN_deta = 0.25 * [-(1-xi); -(1+xi); (1+xi); (1-xi)];
+
+            J = [dN_dxi' * elem_coords(:,1), dN_dxi' * elem_coords(:,2);
+                 dN_deta' * elem_coords(:,1), dN_deta' * elem_coords(:,2)];
+            detJ = det(J);
+
+            x_q = N' * elem_coords(:,1);
+            y_q = N' * elem_coords(:,2);
+
+            u_num = N' * elem_disp(:,1); % x方向
+            v_num = N' * elem_disp(:,2); % y方向
+
+            u_exact_val = u_exact_func(x_q, y_q);
+            u_exact_x = u_exact_val(1);
+            u_exact_y = u_exact_val(2);
+
+            invJ = inv(J);
+            dN_dx = invJ(1,1)*dN_dxi + invJ(1,2)*dN_deta;
+            dN_dy = invJ(2,1)*dN_dxi + invJ(2,2)*dN_deta;
+            
+            du_num_dx = dN_dx' * elem_disp(:,1);
+            du_num_dy = dN_dy' * elem_disp(:,1);
+            dv_num_dx = dN_dx' * elem_disp(:,2);
+            dv_num_dy = dN_dy' * elem_disp(:,2);
+
+            du_exact_val_dx = du_exact_dx(x_q, y_q);
+            du_exact_val_dy = du_exact_dy(x_q, y_q);
+
+            L2_error_sq = L2_error_sq + quad_weights(q) * detJ * ...
+                ((u_num - u_exact_x)^2 + (v_num - u_exact_y)^2);
+
+            L2_norm_exact_sq = L2_norm_exact_sq + quad_weights(q) * detJ * ...
+                (u_exact_x^2 + u_exact_y^2);
+
+            H1_error_sq = H1_error_sq + quad_weights(q) * detJ * ...
+                ((du_num_dx - du_exact_val_dx(1))^2 + ...
+                 (du_num_dy - du_exact_val_dx(2))^2 + ...
+                 (dv_num_dx - du_exact_val_dy(1))^2 + ...
+                 (dv_num_dy - du_exact_val_dy(2))^2);
+
+            H1_norm_exact_sq = H1_norm_exact_sq + quad_weights(q) * detJ * ...
+                (du_exact_val_dx(1)^2 + du_exact_val_dx(2)^2 + ...
+                 du_exact_val_dy(1)^2 + du_exact_val_dy(2)^2);
+        end
+    end
+
 
 
 fprintf('\n--- 输出结果文件 ---\n');
