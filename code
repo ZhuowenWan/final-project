@@ -168,6 +168,35 @@ fprintf('    单元数: %d\n', size(elems, 1));
 fprintf('    坐标范围: x ∈ [%.3f, %.3f], y ∈ [%.3f, %.3f]\n', ...
     min(nodes(:,1)), max(nodes(:,1)), min(nodes(:,2)), max(nodes(:,2)));
 
+boundary = struct();
+field_names = fieldnames(edgesets);
+for i = 1:length(field_names)
+    field_name = field_names{i};
+    elem_list = edgesets.(field_name);
+
+    edges = [];
+    for j = 1:length(elem_list)
+        elem_id = elem_list(j);
+        if elem_id <= size(elems, 1)
+            elem_nodes = elems(elem_id, :);
+
+            if length(elem_nodes) == 4
+                edges = [edges; 
+                    elem_nodes(1), elem_nodes(2);
+                    elem_nodes(2), elem_nodes(3);
+                    elem_nodes(3), elem_nodes(4);
+                    elem_nodes(4), elem_nodes(1)];
+            end
+        end
+    end
+
+    if ~isempty(edges)
+        edges = unique(sort(edges, 2), 'rows');
+        boundary.(field_name) = edges;
+        fprintf('    边界 %s: %d 条边\n', field_name, size(edges, 1));
+    end
+end
+
 
 
 if isfield(boundary, 'left')
