@@ -22,10 +22,6 @@ else
     analysis_type = 'plane_stress';
 end
 
-D = (E/(1-nu^2)) * [1, nu, 0; nu, 1, 0; 0, 0, (1-nu)/2];
-
-fprintf('材料参数: E = %.2e Pa, ν = %.2f, t = %.3f m\n', E, nu, thickness);
-
 mesh_file = 'plate_with_hole.msh';
 fprintf('网格文件: %s\n', mesh_file);
 
@@ -39,6 +35,35 @@ fprintf('  固定边界: %s\n', fixed_boundary);
 fprintf('  加载边界: %s\n', loaded_boundary);
 fprintf('  面力大小: %.2e %s\n', traction_value, ...
     strcmp(analysis_type, 'plane_stress') ? 'Pa' : 'N/m');
+
+fprintf('\n--- 创建材料矩阵 ---\n');
+
+if strcmp(analysis_type, 'plane_stress')
+    D = (E/(1-nu^2)) * [1, nu, 0;
+                        nu, 1, 0;
+                        0, 0, (1-nu)/2];
+    fprintf('  平面应力材料矩阵:\n');
+else
+    D = (E/((1+nu)*(1-2*nu))) * [1-nu, nu, 0;
+                                 nu, 1-nu, 0;
+                                 0, 0, (1-2*nu)/2];
+    fprintf('  平面应变材料矩阵:\n');
+end
+
+fprintf('    [%.3e, %.3e, %.3e]\n', D(1,:));
+fprintf('    [%.3e, %.3e, %.3e]\n', D(2,:));
+fprintf('    [%.3e, %.3e, %.3e]\n', D(3,:));
+
+fprintf('\n--- 读取网格文件 ---\n');
+
+if ~exist(mesh_file, 'file')
+    error('网格文件不存在: %s\n请先生成网格或检查文件路径。', mesh_file);
+end
+
+fid = fopen(mesh_file, 'r');
+if fid == -1
+    error('无法打开文件: %s', mesh_file);
+end
 
 [coordinates, elements, nodesets, edgesets] = readGmshMesh(mesh_file);
 [nodes, elems, boundary] = processMesh(coordinates, elements, nodesets, edgesets);
