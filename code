@@ -569,6 +569,30 @@ title('应力 \sigma_{xx} (Pa)', 'FontSize', 12, 'FontWeight', 'bold');
 xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
 axis equal tight; grid on;
 
+saveas(gcf, 'FEM_results_complete.png');
+fprintf('  图形已保存为 FEM_results_complete.png\n');
+
+fprintf('\n--- 输出结果文件 ---\n');
+
+fid = fopen('FEM_displacements.csv', 'w');
+fprintf(fid, 'NodeID,x,y,Ux,Uy,U_magnitude\n');
+for i = 1:n_nodes
+    fprintf(fid, '%d,%.6f,%.6f,%.6e,%.6e,%.6e\n', ...
+        i, nodes(i,1), nodes(i,2), Ux(i), Uy(i), U_mag(i));
+end
+fclose(fid);
+fprintf('  位移结果已保存为 FEM_displacements.csv\n');
+
+fid = fopen('FEM_stresses.csv', 'w');
+fprintf(fid, 'ElementID,sigma_xx,sigma_yy,tau_xy,vonMises,sigma1,sigma2,sigma3\n');
+for e = 1:n_elems
+    fprintf(fid, '%d,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n', ...
+        e, stress(e,1), stress(e,2), stress(e,3), vonMises(e), ...
+        principal(e,1), principal(e,2), principal(e,3));
+end
+fclose(fid);
+fprintf('  应力结果已保存为 FEM_stresses.csv\n');
+
 
 
 fprintf('\n组装刚度矩阵和载荷向量...\n');
