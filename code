@@ -537,6 +537,38 @@ title(sprintf('变形网格 (放大 %.1f 倍)', scale_factor), ...
 xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
 axis equal tight; grid on;
 
+subplot(2, 3, 3);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceVertexCData', Ux, 'FaceColor', 'interp', 'EdgeColor', 'none');
+colorbar('southoutside');
+title('x方向位移 U_x (m)', 'FontSize', 12, 'FontWeight', 'bold');
+xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+axis equal tight; grid on;
+
+subplot(2, 3, 4);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceVertexCData', Uy, 'FaceColor', 'interp', 'EdgeColor', 'none');
+colorbar('southoutside');
+title('y方向位移 U_y (m)', 'FontSize', 12, 'FontWeight', 'bold');
+xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+axis equal tight; grid on;
+
+subplot(2, 3, 5);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceVertexCData', vonMises, 'FaceColor', 'flat', 'EdgeColor', 'none');
+colorbar('southoutside');
+title('Von Mises应力 (Pa)', 'FontSize', 12, 'FontWeight', 'bold');
+xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+axis equal tight; grid on;
+
+subplot(2, 3, 6);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceVertexCData', stress(:,1), 'FaceColor', 'flat', 'EdgeColor', 'none');
+colorbar('southoutside');
+title('应力 \sigma_{xx} (Pa)', 'FontSize', 12, 'FontWeight', 'bold');
+xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+axis equal tight; grid on;
+
 
 
 fprintf('\n组装刚度矩阵和载荷向量...\n');
