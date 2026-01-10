@@ -372,6 +372,37 @@ if ~isempty(neumann_edges)
     fprintf('    处理了 %d 条边\n', size(neumann_edges, 1));
 end
 
+fprintf('\n--- 施加位移边界条件 ---\n');
+
+fprintf('  处理 %d 个约束自由度\n', length(dirichlet_dofs));
+
+penalty = 1e30 * max(max(abs(K(K~=0))));
+if isnan(penalty) || isinf(penalty) || penalty == 0
+    penalty = 1e30;
+end
+
+K_mod = K;
+F_mod = F;
+
+for i = 1:length(dirichlet_dofs)
+    dof = dirichlet_dofs(i);
+    value = dirichlet_values(i);
+
+    K_mod(dof, dof) = penalty;
+
+    F_mod(dof) = penalty * value;
+
+    for j = 1:n_dofs
+        if j ~= dof
+            F_mod(j) = F_mod(j) - K(j, dof) * value;
+            K_mod(j, dof) = 0;
+            K_mod(dof, j) = 0;
+        end
+    end
+end
+
+fprintf('  边界条件处理完成\n');
+
 
 
 fprintf('\n组装刚度矩阵和载荷向量...\n');
