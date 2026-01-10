@@ -228,23 +228,46 @@ if apply_traction && isfield(boundary, loaded_boundary)
     fprintf('  Neumann边界 (%s):\n', loaded_boundary);
     fprintf('    边数: %d\n', size(loaded_edges, 1));
 
-
-
-fprintf('  Neumann边界: ');
-neumann_edges = [];
-neumann_tractions = [];
-
-if isfield(boundary, 'right')
-    right_edges = boundary.right;
-    fprintf('右边界 (%d条边) - 施加拉力\n', length(right_edges));
+    traction = [traction_value; 0];
     
-    traction = [1e6; 0];  % [tx; ty] (Pa)
-    
-    for i = 1:length(right_edges)
-        neumann_edges = [neumann_edges; right_edges(i, :)];
-        neumann_tractions = [neumann_tractions; traction];
+    for i = 1:size(loaded_edges, 1)
+        neumann_edges = [neumann_edges; loaded_edges(i, :)];
+        neumann_tractions = [neumann_tractions, traction];
     end
+    fprintf('    面力: tx = %.2e, ty = 0\n', traction_value);
+elseif apply_traction
+    fprintf(' 未找到加载边界 "%s"\n', loaded_boundary);
 end
+
+fprintf('\n--- 单元计算准备 ---\n');
+
+Q4_shape = @(xi, eta) deal(...
+    0.25 * [(1-xi)*(1-eta); (1+xi)*(1-eta); (1+xi)*(1+eta); (1-xi)*(1+eta)]', ...
+    0.25 * [-(1-eta); (1-eta); (1+eta); -(1+eta)], ...
+    0.25 * [-(1-xi); -(1+xi); (1+xi); (1-xi)]);
+
+gauss_points = [-1/sqrt(3), -1/sqrt(3);
+                1/sqrt(3), -1/sqrt(3);
+                1/sqrt(3),  1/sqrt(3);
+               -1/sqrt(3),  1/sqrt(3)];
+gauss_weights = [1, 1, 1, 1];
+
+fprintf('  使用2×2 Gauss积分\n');
+fprintf('  每个单元: 8个自由度\n');
+
+fprintf('\n--- 组装有限元系统 ---\n');
+
+n_nodes = size(nodes, 1);
+n_dofs = 2 * n_nodes;
+K = sparse(n_dofs, n_dofs);
+F = sparse(n_dofs, 1);
+
+fprintf('  系统规模: %d 个自由度\n', n_dofs);
+fprintf('  处理单元...\n');
+
+progress_interval = max(1, floor(size(elems, 1)/10));
+
+
 
 fprintf('\n组装刚度矩阵和载荷向量...\n');
 
