@@ -645,14 +645,34 @@ fclose(fid);
 
 fprintf('  总结报告保存为 FEM_summary.txt\n');
 
+fprintf('\n=========================================\n');
+fprintf('   分析完成!\n');
+fprintf('=========================================\n');
+fprintf('\n生成的文件:\n');
+fprintf('  1. FEM_results_complete.png - 结果可视化\n');
+fprintf('  2. FEM_displacements.csv   - 节点位移\n');
+fprintf('  3. FEM_stresses.csv        - 单元应力\n');
+fprintf('  4. FEM_summary.txt         - 分析报告\n');
 
+fprintf('\n最大位移: %.4e m\n', max(U_mag));
+fprintf('最大Mises应力: %.4e Pa\n', max(vonMises));
 
-fprintf('\n组装刚度矩阵和载荷向量...\n');
+if max(vonMises) > 0
+    fprintf('\n安全系数估计 (假设屈服强度 σ_y = 250 MPa):\n');
+    sigma_y = 250e6;
+    safety_factor = sigma_y / max(vonMises);
+    fprintf('  安全系数 = %.2f\n', safety_factor);
+    
+    if safety_factor > 1.5
+        fprintf(' 结构安全 (安全系数 > 1.5)\n');
+    elseif safety_factor > 1.0
+        fprintf(' 结构接近屈服 (1.0 < 安全系数 ≤ 1.5)\n');
+    else
+        fprintf(' 结构可能已屈服 (安全系数 ≤ 1.0)\n');
+    end
+end
 
-fprintf('\n生成可视化结果...\n');
-plotResults(nodes, elems, displacements, element_stresses, vonMises);
-
-outputResults(nodes, displacements, element_stresses, vonMises);
-
-fprintf('\n=== 求解完成 ===\n');
+fprintf('\n分析类型: %s\n', strcmp(analysis_type, 'plane_stress') ? '平面应力' : '平面应变');
+fprintf('分析时间: %s\n', datestr(now));
+fprintf('\n=========================================\n');
 
