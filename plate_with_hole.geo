@@ -9,7 +9,6 @@ Point(3) = {L, H, 0, lc};
 Point(4) = {0, H, 0, lc};
 
 Point(5) = {0.5*L, 0.5*H, 0, lc};
-
 Point(6) = {0.5*L + R, 0.5*H, 0, lc/2};
 Point(7) = {0.5*L, 0.5*H + R, 0, lc/2};
 Point(8) = {0.5*L - R, 0.5*H, 0, lc/2};
@@ -32,8 +31,10 @@ Plane Surface(1) = {1, 2};
 
 Physical Curve("left") = {4};
 Physical Curve("right") = {2};
+
 Physical Curve("top") = {3};
 Physical Curve("bottom") = {1};
+
 Physical Curve("hole") = {5,6,7,8};
 
 Physical Surface("domain") = {1};
