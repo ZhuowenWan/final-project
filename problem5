@@ -214,7 +214,7 @@ function thick_walled_cylinder_analysis()
     end
 
     fprintf('  求解线性系统...\n');
-    U = K_mod / F_mod;
+    U = K_mod \ F_mod;
     
     displacements = reshape(U, 2, n_nodes)';
     Ux = displacements(:, 1);
@@ -245,9 +245,9 @@ function thick_walled_cylinder_analysis()
         xi = 0; eta = 0;
         [N, dN_dxi, dN_deta] = Q4_shape(xi, eta);
 
-        x_center = N' * node_coords(:,1);
-        y_center = N' * node_coords(:,2);
-        r_center = sqrt(x_center^2 + y_center^2);
+        x_center = N'.* node_coords(:,1);
+        y_center = N'.* node_coords(:,2);
+        r_center = sqrt(x_center.^2 + y_center.^2);
         theta_center = atan2(y_center, x_center);
 
         J = [dN_dxi' * node_coords(:,1), dN_dxi' * node_coords(:,2);
@@ -270,14 +270,17 @@ function thick_walled_cylinder_analysis()
 
         stress_global = D * strain;
 
+        stress_global_3x1 = stress_global(1:3);
+        stress_global_12x1 = repmat(stress_global_3x1, 4, 1);
+
         cos_theta = cos(theta_center);
         sin_theta = sin(theta_center);
         
-        T = [cos_theta^2, sin_theta^2, 2*sin_theta*cos_theta;
-             sin_theta^2, cos_theta^2, -2*sin_theta*cos_theta;
-             -sin_theta*cos_theta, sin_theta*cos_theta, cos_theta^2-sin_theta^2];
+        T = [cos_theta.^2, sin_theta.^2, 2*sin_theta.*cos_theta;
+             sin_theta.^2, cos_theta.^2, -2*sin_theta.*cos_theta;
+             -sin_theta.*cos_theta, sin_theta.*cos_theta, cos_theta.^2-sin_theta.^2];
         
-        stress_polar = T * stress_global;
+        stress_polar = T .* stress_global_12x1';
         
         elem_stress(e, :) = stress_polar';
         elem_coords(e, :) = [r_center, theta_center];
