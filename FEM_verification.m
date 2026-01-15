@@ -1,0 +1,806 @@
+
+fprintf('=========================================\n');
+fprintf('   平面弹性有限元分析 \n');
+fprintf('=========================================\n\n');
+
+E = 210e9;
+nu = 0.3;
+thickness = 0.01;
+
+fprintf('选择分析类型:\n');
+fprintf('  1. 平面应力 (plane stress) - 适用于薄板结构\n');
+fprintf('  2. 平面应变 (plane strain) - 适用于厚结构或长柱体\n');
+choice = input('输入选择 (1 或 2, 默认1): ');
+
+if isempty(choice) || choice == 1
+    analysis_type = 'plane_stress';
+    fprintf('  已选择: 平面应力\n');
+elseif choice == 2
+    analysis_type = 'plane_strain';
+    fprintf('  已选择: 平面应变\n');
+else
+    fprintf('  无效选择，使用默认值: 平面应力\n');
+    analysis_type = 'plane_stress';
+end
+
+mesh_file = 'plate_with_hole.geo';
+fprintf('网格文件: %s\n', mesh_file);
+
+apply_traction = true;
+traction_value = 1e6;
+fixed_boundary = 'left';
+loaded_boundary = 'right';
+
+fprintf('\n边界条件:\n');
+fprintf('  固定边界: %s\n', fixed_boundary);
+fprintf('  加载边界: %s\n', loaded_boundary);
+fprintf('  面力大小: %.2e %s\n', traction_value, ...
+    strcmp(analysis_type, 'plane_stress') , 'Pa' : 'N/m');
+
+fprintf('\n--- 创建材料矩阵 ---\n');
+
+if strcmp(analysis_type, 'plane_stress')
+    D = (E/(1-nu^2)) * [1, nu, 0;
+                        nu, 1, 0;
+                        0, 0, (1-nu)/2];
+    fprintf('  平面应力材料矩阵:\n');
+else
+    D = (E/((1+nu)*(1-2*nu))) * [1-nu, nu, 0;
+                                 nu, 1-nu, 0;
+                                 0, 0, (1-2*nu)/2];
+    fprintf('  平面应变材料矩阵:\n');
+end
+
+fprintf('    [%.3e, %.3e, %.3e]\n', D(1,:));
+fprintf('    [%.3e, %.3e, %.3e]\n', D(2,:));
+fprintf('    [%.3e, %.3e, %.3e]\n', D(3,:));
+
+fprintf('\n--- 读取网格文件 ---\n');
+
+if ~exist(mesh_file, 'file')
+    error('网格文件不存在: %s\n请先生成网格或检查文件路径。', mesh_file);
+end
+
+fid = fopen(mesh_file, 'r');
+if fid == -1
+    error('无法打开文件: %s', mesh_file);
+end
+
+coordinates = [];
+elements = [];
+nodesets = struct();
+edgesets = struct();
+
+section = '';
+line_count = 0;
+node_section_started = false;
+element_section_started = false;
+
+while ~feof(fid)
+    line = fgetl(fid);
+    line_count = line_count + 1;
+    
+    if isempty(line)
+        continue;
+    end
+
+    if strcmp(line(1), '$')
+        section = line(2:end);
+        
+        if strcmp(section, 'Nodes')
+            node_section_started = true;
+            element_section_started = false;
+        elseif strcmp(section, 'Elements')
+            element_section_started = true;
+            node_section_started = false;
+        elseif strcmp(section, 'EndNodes') || strcmp(section, 'EndElements')
+            node_section_started = false;
+            element_section_started = false;
+        end
+        continue;
+    end
+
+    if node_section_started
+        if isempty(coordinates)
+            n_nodes = str2double(line);
+            coordinates = zeros(n_nodes, 3);
+            node_counter = 1;
+            continue;
+        end
+
+        data = sscanf(line, '%f');
+        if length(data) >= 4
+            node_id = data(1);
+            coordinates(node_id, :) = data(2:4);
+            node_counter = node_counter + 1;
+        end
+
+    elseif element_section_started
+        if isempty(elements)
+            n_elems = str2double(line);
+            elements = cell(n_elems, 1);
+            element_counter = 1;
+            continue;
+        end
+
+        data = sscanf(line, '%f');
+        if ~isempty(data)
+            elem_id = data(1);
+            elem_type = data(2);
+            n_tags = data(3);
+
+            tag_start = 4;
+            node_start = tag_start + n_tags;
+
+            if elem_type == 3 
+                nodes = data(node_start:end)';
+                elements{elem_id} = nodes;
+
+                if n_tags >= 2
+                    phys_group = data(5);
+                    group_name = sprintf('group%d', phys_group);
+                    if ~isfield(edgesets, group_name)
+                        edgesets.(group_name) = [];
+                    end
+                    edgesets.(group_name) = [edgesets.(group_name); elem_id];
+                end
+            elseif elem_type == 2 
+                nodes = data(node_start:end)';
+                elements{elem_id} = nodes;
+            end
+        end
+    end
+end
+
+fclose(fid);
+
+valid_elems = ~cellfun('isempty', elements);
+element_ids = find(valid_elems);
+elems = zeros(length(element_ids), 4);
+for i = 1:length(element_ids)
+    elems(i, :) = elements{element_ids(i)};
+end
+
+nodes = coordinates(:, 1:2);
+
+fprintf('  网格信息:\n');
+fprintf('    节点数: %d\n', size(nodes, 1));
+fprintf('    单元数: %d\n', size(elems, 1));
+fprintf('    坐标范围: x ∈ [%.3f, %.3f], y ∈ [%.3f, %.3f]\n', ...
+    min(nodes(:,1)), max(nodes(:,1)), min(nodes(:,2)), max(nodes(:,2)));
+
+boundary = struct();
+field_names = fieldnames(edgesets);
+for i = 1:length(field_names)
+    field_name = field_names{i};
+    elem_list = edgesets.(field_name);
+
+    edges = [];
+    for j = 1:length(elem_list)
+        elem_id = elem_list(j);
+        if elem_id <= size(elems, 1)
+            elem_nodes = elems(elem_id, :);
+
+            if length(elem_nodes) == 4
+                edges = [edges; 
+                    elem_nodes(1), elem_nodes(2);
+                    elem_nodes(2), elem_nodes(3);
+                    elem_nodes(3), elem_nodes(4);
+                    elem_nodes(4), elem_nodes(1)];
+            end
+        end
+    end
+
+    if ~isempty(edges)
+        edges = unique(sort(edges, 2), 'rows');
+        boundary.(field_name) = edges;
+        fprintf('    边界 %s: %d 条边\n', field_name, size(edges, 1));
+    end
+end
+
+fprintf('\n--- 设置边界条件 ---\n');
+
+dirichlet_dofs = [];
+dirichlet_values = [];
+neumann_edges = [];
+neumann_tractions = [];
+
+if isfield(boundary, fixed_boundary)
+    fixed_edges = boundary.(fixed_boundary);
+
+    fixed_nodes = unique(fixed_edges(:));
+    
+    fprintf('  Dirichlet边界 (%s):\n', fixed_boundary);
+    fprintf('    节点数: %d\n', length(fixed_nodes));
+
+    for i = 1:length(fixed_nodes)
+        node = fixed_nodes(i);
+        dirichlet_dofs = [dirichlet_dofs; node*2-1; node*2];
+        dirichlet_values = [dirichlet_values; 0; 0];
+    end
+    fprintf('    约束: ux = 0, uy = 0\n');
+else
+    fprintf(' 未找到固定边界 "%s"\n', fixed_boundary);
+end
+
+if apply_traction && isfield(boundary, loaded_boundary)
+    loaded_edges = boundary.(loaded_boundary);
+    
+    fprintf('  Neumann边界 (%s):\n', loaded_boundary);
+    fprintf('    边数: %d\n', size(loaded_edges, 1));
+
+    traction = [traction_value; 0];
+    
+    for i = 1:size(loaded_edges, 1)
+        neumann_edges = [neumann_edges; loaded_edges(i, :)];
+        neumann_tractions = [neumann_tractions, traction];
+    end
+    fprintf('    面力: tx = %.2e, ty = 0\n', traction_value);
+elseif apply_traction
+    fprintf(' 未找到加载边界 "%s"\n', loaded_boundary);
+end
+
+fprintf('\n--- 单元计算准备 ---\n');
+
+Q4_shape = @(xi, eta) deal(...
+    0.25 * [(1-xi)*(1-eta); (1+xi)*(1-eta); (1+xi)*(1+eta); (1-xi)*(1+eta)]', ...
+    0.25 * [-(1-eta); (1-eta); (1+eta); -(1+eta)], ...
+    0.25 * [-(1-xi); -(1+xi); (1+xi); (1-xi)]);
+
+gauss_points = [-1/sqrt(3), -1/sqrt(3);
+                1/sqrt(3), -1/sqrt(3);
+                1/sqrt(3),  1/sqrt(3);
+               -1/sqrt(3),  1/sqrt(3)];
+gauss_weights = [1, 1, 1, 1];
+
+fprintf('  使用2×2 Gauss积分\n');
+fprintf('  每个单元: 8个自由度\n');
+
+fprintf('\n--- 组装有限元系统 ---\n');
+
+n_nodes = size(nodes, 1);
+n_dofs = 2 * n_nodes;
+K = sparse(n_dofs, n_dofs);
+F = sparse(n_dofs, 1);
+
+fprintf('  系统规模: %d 个自由度\n', n_dofs);
+fprintf('  处理单元...\n');
+
+progress_interval = max(1, floor(size(elems, 1)/10));
+
+for e = 1:size(elems, 1)
+    if mod(e, progress_interval) == 0
+        fprintf('    %d/%d (%.0f%%)\n', e, size(elems, 1), e/size(elems, 1)*100);
+    end
+
+    elem_nodes = elems(e, :);
+    node_coords = nodes(elem_nodes, :);
+
+    Ke = zeros(8, 8);
+    Fe = zeros(8, 1);
+
+    for g = 1:4
+        xi = gauss_points(g, 1);
+        eta = gauss_points(g, 2);
+
+        [N, dN_dxi, dN_deta] = Q4_shape(xi, eta);
+
+        dx_dxi = dN_dxi' * node_coords(:,1);
+        dy_dxi = dN_dxi' * node_coords(:,2);
+        dx_deta = dN_deta' * node_coords(:,1);
+        dy_deta = dN_deta' * node_coords(:,2);
+        
+        J = [dx_dxi, dy_dxi; dx_deta, dy_deta];
+        detJ = det(J);
+        
+        if detJ <= 0
+            warning('单元 %d 的雅可比行列式为负或零: detJ = %.2e', e, detJ);
+            detJ = abs(detJ);
+        end
+        
+        invJ = inv(J);
+
+        dN_dx = invJ(1,1)*dN_dxi + invJ(1,2)*dN_deta;
+        dN_dy = invJ(2,1)*dN_dxi + invJ(2,2)*dN_deta;
+
+        B = zeros(3, 8);
+        for j = 1:4
+            B(1, 2*j-1) = dN_dx(j);    % ε_xx
+            B(2, 2*j)   = dN_dy(j);    % ε_yy
+            B(3, 2*j-1) = dN_dy(j);    % γ_xy
+            B(3, 2*j)   = dN_dx(j);
+        end
+
+        if strcmp(analysis_type, 'plane_stress')
+            thickness_factor = thickness;
+        else
+            thickness_factor = 1.0;
+        end
+
+        Ke = Ke + B' * D * B * detJ * thickness_factor * gauss_weights(g);
+
+    end
+
+    dof_indices = zeros(8, 1);
+    for j = 1:4
+        dof_indices(2*j-1) = 2*elem_nodes(j) - 1;
+        dof_indices(2*j)   = 2*elem_nodes(j);
+    end
+    
+    K(dof_indices, dof_indices) = K(dof_indices, dof_indices) + Ke;
+    F(dof_indices) = F(dof_indices) + Fe;
+end
+
+fprintf('  单元处理完成\n');
+
+if ~isempty(neumann_edges)
+    fprintf('\n  施加面力边界条件...\n');
+
+    if strcmp(analysis_type, 'plane_stress')
+        thickness_factor = thickness;
+    else
+        thickness_factor = 1.0;
+    end
+
+    for i = 1:size(neumann_edges, 1)
+        node1 = neumann_edges(i, 1);
+        node2 = neumann_edges(i, 2);
+
+        x1 = nodes(node1, :);
+        x2 = nodes(node2, :);
+
+        edge_vec = x2 - x1;
+        edge_length = norm(edge_vec);
+
+        t = edge_vec / edge_length;
+        n = [t(2), -t(1)];
+
+        traction = neumann_tractions(:, i);
+
+        fx = traction(1) * n(1) + traction(2) * n(2);
+        fy = traction(1) * n(2) - traction(2) * n(1);
+
+        f_total = [fx; fy] * edge_length * thickness_factor;
+        f_node = f_total / 2;
+
+        dof1 = [2*node1-1, 2*node1];
+        dof2 = [2*node2-1, 2*node2];
+        
+        F(dof1) = F(dof1) + f_node;
+        F(dof2) = F(dof2) + f_node;
+    end
+    
+    fprintf('    处理了 %d 条边\n', size(neumann_edges, 1));
+end
+
+fprintf('\n--- 施加位移边界条件 ---\n');
+
+fprintf('  处理 %d 个约束自由度\n', length(dirichlet_dofs));
+
+penalty = 1e30 * max(max(abs(K(K~=0))));
+if isnan(penalty) || isinf(penalty) || penalty == 0
+    penalty = 1e30;
+end
+
+K_mod = K;
+F_mod = F;
+
+for i = 1:length(dirichlet_dofs)
+    dof = dirichlet_dofs(i);
+    value = dirichlet_values(i);
+
+    K_mod(dof, dof) = penalty;
+
+    F_mod(dof) = penalty * value;
+
+    for j = 1:n_dofs
+        if j ~= dof
+            F_mod(j) = F_mod(j) - K(j, dof) * value;
+            K_mod(j, dof) = 0;
+            K_mod(dof, j) = 0;
+        end
+    end
+end
+
+fprintf('  边界条件处理完成\n');
+
+fprintf('\n--- 求解线性系统 ---\n');
+
+fprintf('  求解 %d×%d 稀疏线性系统...\n', n_dofs, n_dofs);
+
+U = K_mod \ F_mod;
+
+displacements = reshape(U, 2, n_nodes)';
+Ux = displacements(:, 1);
+Uy = displacements(:, 2);
+U_mag = sqrt(Ux.^2 + Uy.^2);
+
+fprintf('\n  位移统计:\n');
+fprintf('    最大x位移: %.4e m (节点 %d)\n', max(abs(Ux)), find(abs(Ux) == max(abs(Ux)), 1));
+fprintf('    最大y位移: %.4e m (节点 %d)\n', max(abs(Uy)), find(abs(Uy) == max(abs(Uy)), 1));
+fprintf('    最大总位移: %.4e m (节点 %d)\n', max(U_mag), find(U_mag == max(U_mag), 1));
+fprintf('    平均位移: %.4e m\n', mean(U_mag));
+
+fprintf('\n--- 计算应力和应变 ---\n');
+
+n_elems = size(elems, 1);
+stress = zeros(n_elems, 3);      % [σ_xx, σ_yy, τ_xy]
+strain = zeros(n_elems, 3);      % [ε_xx, ε_yy, γ_xy]
+vonMises = zeros(n_elems, 1);
+principal = zeros(n_elems, 3);   % [σ1, σ2, σ3]
+
+fprintf('  计算 %d 个单元的应力应变...\n', n_elems);
+
+for e = 1:n_elems
+    elem_nodes = elems(e, :);
+    node_coords = nodes(elem_nodes, :);
+    elem_disp = displacements(elem_nodes, :);
+    
+    xi = 0; eta = 0;
+    
+    [~, dN_dxi, dN_deta] = Q4_shape(xi, eta);
+
+    J = [dN_dxi' * node_coords(:,1), dN_dxi' * node_coords(:,2);
+         dN_deta' * node_coords(:,1), dN_deta' * node_coords(:,2)];
+    invJ = inv(J);
+
+    dN_dx = invJ(1,1)*dN_dxi + invJ(1,2)*dN_deta;
+    dN_dy = invJ(2,1)*dN_dxi + invJ(2,2)*dN_deta;
+
+    B = zeros(3, 8);
+    for j = 1:4
+        B(1, 2*j-1) = dN_dx(j);
+        B(2, 2*j)   = dN_dy(j);
+        B(3, 2*j-1) = dN_dy(j);
+        B(3, 2*j)   = dN_dx(j);
+    end
+
+    u_vec = reshape(elem_disp', 8, 1);
+
+    strain(e, :) = (B * u_vec)';
+
+    stress(e, :) = (D * strain(e, :)')';
+
+    if strcmp(analysis_type, 'plane_strain')
+        sigma_zz = nu * (stress(e,1) + stress(e,2));
+    else
+        sigma_zz = 0;
+    end
+
+    sxx = stress(e, 1);
+    syy = stress(e, 2);
+    sxy = stress(e, 3);
+    szz = sigma_zz;
+
+    vonMises(e) = sqrt(0.5 * ((sxx-syy)^2 + (syy-szz)^2 + (szz-sxx)^2 + ...
+                              6 * sxy^2));
+
+    if strcmp(analysis_type, 'plane_strain')
+        sigma_avg = (sxx + syy) / 2;
+        R = sqrt(((sxx - syy)/2)^2 + sxy^2);
+        sigma1_2D = sigma_avg + R;
+        sigma2_2D = sigma_avg - R;
+
+        principal(e, :) = sort([sigma1_2D, sigma2_2D, sigma_zz], 'descend');
+    else
+        sigma_avg = (sxx + syy) / 2;
+        R = sqrt(((sxx - syy)/2)^2 + sxy^2);
+        sigma1 = sigma_avg + R;
+        sigma2 = sigma_avg - R;
+        sigma3 = 0;
+        
+        principal(e, :) = [sigma1, sigma2, sigma3];
+    end
+end
+
+fprintf('\n  应力统计:\n');
+fprintf('    最大σ_xx: %.4e Pa\n', max(stress(:,1)));
+fprintf('    最大σ_yy: %.4e Pa\n', max(stress(:,2)));
+fprintf('    最大τ_xy: %.4e Pa\n', max(abs(stress(:,3))));
+fprintf('    最大Mises应力: %.4e Pa\n', max(vonMises));
+if strcmp(analysis_type, 'plane_strain')
+    fprintf('    最大σ_zz: %.4e Pa\n', nu * max(stress(:,1) + stress(:,2)));
+end
+
+fprintf('\n--- 生成可视化结果 ---\n');
+
+figure('Position', [50, 50, 1400, 900], 'Name', '有限元分析结果', 'NumberTitle', 'off');
+
+max_disp = max(U_mag);
+if max_disp > 0
+    scale_factor = 0.1 * max(range(nodes)) / max_disp;
+else
+    scale_factor = 1;
+end
+deformed_nodes = nodes + displacements * scale_factor;
+
+subplot(2, 3, 1);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceColor', 'none', 'EdgeColor', 'b', 'LineWidth', 0.5);
+title('原始网格', 'FontSize', 12, 'FontWeight', 'bold');
+xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+axis equal tight; grid on;
+if ~isempty(fixed_boundary) && isfield(boundary, fixed_boundary)
+    hold on;
+    fixed_edges = boundary.(fixed_boundary);
+    for i = 1:size(fixed_edges, 1)
+        plot(nodes(fixed_edges(i,:), 1), nodes(fixed_edges(i,:), 2), ...
+             'r-', 'LineWidth', 3);
+    end
+    legend('网格', '固定边界', 'Location', 'best');
+end
+
+subplot(2, 3, 2);
+patch('Faces', elems, 'Vertices', deformed_nodes, ...
+      'FaceColor', 'none', 'EdgeColor', 'r', 'LineWidth', 0.5);
+title(sprintf('变形网格 (放大 %.1f 倍)', scale_factor), ...
+      'FontSize', 12, 'FontWeight', 'bold');
+xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+axis equal tight; grid on;
+
+subplot(2, 3, 3);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceVertexCData', Ux, 'FaceColor', 'interp', 'EdgeColor', 'none');
+colorbar('southoutside');
+title('x方向位移 U_x (m)', 'FontSize', 12, 'FontWeight', 'bold');
+xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+axis equal tight; grid on;
+
+subplot(2, 3, 4);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceVertexCData', Uy, 'FaceColor', 'interp', 'EdgeColor', 'none');
+colorbar('southoutside');
+title('y方向位移 U_y (m)', 'FontSize', 12, 'FontWeight', 'bold');
+xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+axis equal tight; grid on;
+
+subplot(2, 3, 5);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceVertexCData', vonMises, 'FaceColor', 'flat', 'EdgeColor', 'none');
+colorbar('southoutside');
+title('Von Mises应力 (Pa)', 'FontSize', 12, 'FontWeight', 'bold');
+xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+axis equal tight; grid on;
+
+subplot(2, 3, 6);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceVertexCData', stress(:,1), 'FaceColor', 'flat', 'EdgeColor', 'none');
+colorbar;
+title('正应力 \sigma_{xx} (Pa)', 'FontSize', 11, 'FontWeight', 'bold');
+xlabel('x (m)'); ylabel('y (m)');
+axis equal tight; grid on;
+
+subplot(2, 3, 7);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceVertexCData', stress(:,2), 'FaceColor', 'flat', 'EdgeColor', 'none');
+colorbar;
+title('正应力 \sigma_{yy} (Pa)', 'FontSize', 11, 'FontWeight', 'bold');
+xlabel('x (m)'); ylabel('y (m)');
+axis equal tight; grid on;
+
+subplot(2, 3, 8);
+patch('Faces', elems, 'Vertices', nodes, ...
+      'FaceVertexCData', stress(:,3), 'FaceColor', 'flat', 'EdgeColor', 'none');
+colorbar;
+title('剪应力 \tau_{xy} (Pa)', 'FontSize', 11, 'FontWeight', 'bold');
+xlabel('x (m)'); ylabel('y (m)');
+axis equal tight; grid on;
+
+saveas(gcf, 'FEM_results_complete.png');
+fprintf('  图形已保存为 FEM_results_complete.png\n');
+
+fprintf('\n--- 计算L₂和H₁范数误差 ---\n');
+
+if calculate_errors && manufactured_solution
+    fprintf('  误差计算...\n');
+
+    L2_error_sq = 0;
+    H1_error_sq = 0;
+    L2_norm_exact_sq = 0;
+    H1_norm_exact_sq = 0;
+
+    for e = 1:n_elems
+        elem_nodes = elems(e, :);
+        elem_coords = nodes(elem_nodes, :);
+        elem_disp = displacements(elem_nodes, :);
+
+        [quad_points, quad_weights] = getQuadraturePoints(4);
+        
+        for q = 1:length(quad_weights)
+            xi = quad_points(q, 1);
+            eta = quad_points(q, 2);
+
+            N = 0.25 * [(1-xi)*(1-eta); (1+xi)*(1-eta); (1+xi)*(1+eta); (1-xi)*(1+eta)];
+
+            dN_dxi = 0.25 * [-(1-eta); (1-eta); (1+eta); -(1+eta)];
+            dN_deta = 0.25 * [-(1-xi); -(1+xi); (1+xi); (1-xi)];
+
+            J = [dN_dxi' * elem_coords(:,1), dN_dxi' * elem_coords(:,2);
+                 dN_deta' * elem_coords(:,1), dN_deta' * elem_coords(:,2)];
+            detJ = det(J);
+
+            x_q = N' * elem_coords(:,1);
+            y_q = N' * elem_coords(:,2);
+
+            u_num = N' * elem_disp(:,1); % x方向
+            v_num = N' * elem_disp(:,2); % y方向
+
+            u_exact_val = u_exact_func(x_q, y_q);
+            u_exact_x = u_exact_val(1);
+            u_exact_y = u_exact_val(2);
+
+            invJ = inv(J);
+            dN_dx = invJ(1,1)*dN_dxi + invJ(1,2)*dN_deta;
+            dN_dy = invJ(2,1)*dN_dxi + invJ(2,2)*dN_deta;
+            
+            du_num_dx = dN_dx' * elem_disp(:,1);
+            du_num_dy = dN_dy' * elem_disp(:,1);
+            dv_num_dx = dN_dx' * elem_disp(:,2);
+            dv_num_dy = dN_dy' * elem_disp(:,2);
+
+            du_exact_val_dx = du_exact_dx(x_q, y_q);
+            du_exact_val_dy = du_exact_dy(x_q, y_q);
+
+            L2_error_sq = L2_error_sq + quad_weights(q) * detJ * ...
+                ((u_num - u_exact_x)^2 + (v_num - u_exact_y)^2);
+
+            L2_norm_exact_sq = L2_norm_exact_sq + quad_weights(q) * detJ * ...
+                (u_exact_x^2 + u_exact_y^2);
+
+            H1_error_sq = H1_error_sq + quad_weights(q) * detJ * ...
+                ((du_num_dx - du_exact_val_dx(1))^2 + ...
+                 (du_num_dy - du_exact_val_dx(2))^2 + ...
+                 (dv_num_dx - du_exact_val_dy(1))^2 + ...
+                 (dv_num_dy - du_exact_val_dy(2))^2);
+
+            H1_norm_exact_sq = H1_norm_exact_sq + quad_weights(q) * detJ * ...
+                (du_exact_val_dx(1)^2 + du_exact_val_dx(2)^2 + ...
+                 du_exact_val_dy(1)^2 + du_exact_val_dy(2)^2);
+        end
+    end
+end
+
+  L2_error = sqrt(L2_error_sq);
+    L2_norm_exact = sqrt(L2_norm_exact_sq);
+    relative_L2_error = L2_error / L2_norm_exact;
+    
+    H1_error = sqrt(H1_error_sq);
+    H1_norm_exact = sqrt(H1_norm_exact_sq);
+    relative_H1_error = H1_error / H1_norm_exact;
+
+    fprintf('\n  === 误差分析结果 ===\n');
+    fprintf('  绝对L₂误差: %.4e\n', L2_error);
+    fprintf('  相对L₂误差: %.4e (%.4f%%)\n', relative_L2_error, relative_L2_error*100);
+    fprintf('  绝对H₁误差: %.4e\n', H1_error);
+    fprintf('  相对H₁误差: %.4e (%.4f%%)\n', relative_H1_error, relative_H1_error*100);
+    fprintf('  精确解L₂范数: %.4e\n', L2_norm_exact);
+    fprintf('  精确解H₁范数: %.4e\n', H1_norm_exact);
+
+    h_max = 0;
+    h_min = inf;
+    for e = 1:n_elems
+        elem_nodes = elems(e, :);
+        elem_coords = nodes(elem_nodes, :);
+
+        for i = 1:length(elem_nodes)
+            for j = i+1:length(elem_nodes)
+                dist = norm(elem_coords(i,:) - elem_coords(j,:));
+                h_max = max(h_max, dist);
+                h_min = min(h_min, dist);
+            end
+        end
+    end
+    
+    fprintf('  网格尺寸: h_max = %.4f, h_min = %.4f\n', h_max, h_min);
+    fprintf('  收敛率估计:\n');
+    fprintf('    L₂误差应约为 O(h^2) ≈ %.4e\n', h_max^2);
+    fprintf('    H₁误差应约为 O(h^1) ≈ %.4e\n', h_max);
+
+    fid = fopen('FEM_error_analysis.txt', 'w');
+    fprintf(fid, '=========================================\n');
+    fprintf(fid, '       有限元误差分析报告\n');
+    fprintf(fid, '=========================================\n\n');
+
+fprintf('\n--- 输出结果文件 ---\n');
+
+fid = fopen('FEM_displacements.csv', 'w');
+fprintf(fid, 'NodeID,x,y,Ux,Uy,U_magnitude\n');
+for i = 1:n_nodes
+    fprintf(fid, '%d,%.6f,%.6f,%.6e,%.6e,%.6e\n', ...
+        i, nodes(i,1), nodes(i,2), Ux(i), Uy(i), U_mag(i));
+end
+fclose(fid);
+fprintf('  位移结果已保存为 FEM_displacements.csv\n');
+
+fid = fopen('FEM_stresses.csv', 'w');
+fprintf(fid, 'ElementID,sigma_xx,sigma_yy,tau_xy,vonMises,sigma1,sigma2,sigma3\n');
+for e = 1:n_elems
+    fprintf(fid, '%d,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n', ...
+        e, stress(e,1), stress(e,2), stress(e,3), vonMises(e), ...
+        principal(e,1), principal(e,2), principal(e,3));
+end
+fclose(fid);
+fprintf('  应力结果已保存为 FEM_stresses.csv\n');
+
+fid = fopen('FEM_summary.txt', 'w');
+fprintf(fid, '=========================================\n');
+fprintf(fid, '       平面弹性有限元分析报告\n');
+fprintf(fid, '=========================================\n\n');
+
+fprintf(fid, '分析类型: %s\n', analysis_type);
+fprintf(fid, '网格文件: %s\n', mesh_file);
+fprintf(fid, '\n材料参数:\n');
+fprintf(fid, '  弹性模量 E = %.2e Pa\n', E);
+fprintf(fid, '  泊松比 ν = %.2f\n', nu);
+if strcmp(analysis_type, 'plane_stress')
+    fprintf(fid, '  厚度 t = %.3f m\n', thickness);
+end
+
+fprintf(fid, '\n网格信息:\n');
+fprintf(fid, '  节点数: %d\n', n_nodes);
+fprintf(fid, '  单元数: %d\n', n_elems);
+
+fprintf(fid, '\n边界条件:\n');
+fprintf(fid, '  固定边界: %s (%d个约束自由度)\n', fixed_boundary, length(dirichlet_dofs));
+if apply_traction
+    fprintf(fid, '  加载边界: %s (面力: %.2e %s)\n', loaded_boundary, traction_value, ...
+        strcmp(analysis_type, 'plane_stress') , 'Pa' : 'N/m');
+end
+
+fprintf(fid, '\n位移结果:\n');
+fprintf(fid, '  最大x位移: %.4e m\n', max(abs(Ux)));
+fprintf(fid, '  最大y位移: %.4e m\n', max(abs(Uy)));
+fprintf(fid, '  最大总位移: %.4e m\n', max(U_mag));
+fprintf(fid, '  平均位移: %.4e m\n', mean(U_mag));
+
+fprintf(fid, '\n应力结果:\n');
+fprintf(fid, '  最大σ_xx: %.4e Pa\n', max(stress(:,1)));
+fprintf(fid, '  最大σ_yy: %.4e Pa\n', max(stress(:,2)));
+fprintf(fid, '  最大τ_xy: %.4e Pa\n', max(abs(stress(:,3))));
+fprintf(fid, '  最大Mises应力: %.4e Pa\n', max(vonMises));
+if strcmp(analysis_type, 'plane_strain')
+    fprintf(fid, '  最大σ_zz: %.4e Pa\n', nu * max(stress(:,1) + stress(:,2)));
+end
+
+fprintf(fid, '\n生成文件:\n');
+fprintf(fid, '  FEM_results_complete.png - 结果图形\n');
+fprintf(fid, '  FEM_displacements.csv   - 节点位移数据\n');
+fprintf(fid, '  FEM_stresses.csv        - 单元应力数据\n');
+fprintf(fid, '  FEM_summary.txt         - 分析报告\n');
+
+fprintf(fid, '\n分析完成时间: %s\n', datestr(now));
+fprintf(fid, '=========================================\n');
+fclose(fid);
+
+fprintf('  总结报告保存为 FEM_summary.txt\n');
+
+fprintf('\n=========================================\n');
+fprintf('   分析完成!\n');
+fprintf('=========================================\n');
+fprintf('\n生成的文件:\n');
+fprintf('  1. FEM_results_complete.png - 结果可视化\n');
+fprintf('  2. FEM_displacements.csv   - 节点位移\n');
+fprintf('  3. FEM_stresses.csv        - 单元应力\n');
+fprintf('  4. FEM_summary.txt         - 分析报告\n');
+
+fprintf('\n最大位移: %.4e m\n', max(U_mag));
+fprintf('最大Mises应力: %.4e Pa\n', max(vonMises));
+
+if max(vonMises) > 0
+    fprintf('\n安全系数估计 (假设屈服强度 σ_y = 250 MPa):\n');
+    sigma_y = 250e6;
+    safety_factor = sigma_y / max(vonMises);
+    fprintf('  安全系数 = %.2f\n', safety_factor);
+    
+    if safety_factor > 1.5
+        fprintf(' 结构安全 (安全系数 > 1.5)\n');
+    elseif safety_factor > 1.0
+        fprintf(' 结构接近屈服 (1.0 < 安全系数 ≤ 1.5)\n');
+    else
+        fprintf(' 结构可能已屈服 (安全系数 ≤ 1.0)\n');
+    end
+end
+
+fprintf('\n分析类型: %s\n', strcmp(analysis_type, 'plane_stress') , '平面应力' : '平面应变');
+fprintf('分析时间: %s\n', datestr(now));
+fprintf('\n=========================================\n');

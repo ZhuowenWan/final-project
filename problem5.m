@@ -1,0 +1,469 @@
+function thick_walled_cylinder_analysis()
+    fprintf('=========================================\n');
+    fprintf('   thick_walled_cylinder_analysis\n');
+    fprintf('=========================================\n\n');
+
+    E = 210e9;
+    nu = 0.3;
+    r1 = 0.1;
+    r2 = 0.2;
+    delta = 0.001;
+    
+    fprintf('几何参数:\n');
+    fprintf('  内半径 r1 = %.3f m\n', r1);
+    fprintf('  外半径 r2 = %.3f m\n', r2);
+    fprintf('  半径比 r2/r1 = %.2f\n', r2/r1);
+    fprintf('  过盈量 δ = %.4f m\n', delta);
+    fprintf('材料参数:\n');
+    fprintf('  弹性模量 E = %.2e Pa\n', E);
+    fprintf('  泊松比 ν = %.2f\n', nu);
+
+    fprintf('\n--- 计算解析解 ---\n');
+
+    K = E * delta * r1 / ((1+nu) * (r2^2 + (1-2*nu)*r1^2));
+    fprintf('  常数 K = %.4e\n', K);
+
+    n_points = 100;
+    r_analytic = linspace(r1, r2, n_points);
+
+    u_r_analytic = (delta * r1) / (r2^2 + (1-2*nu)*r1^2) * ...
+                   ((1-2*nu)*r_analytic + r2^2 ./ r_analytic);
+    
+    sigma_r_analytic = K * (1./r_analytic - r_analytic/r2^2);
+    sigma_theta_analytic = K * ((1-2*nu)./r_analytic + r_analytic/r2^2);
+    sigma_z_analytic = 2*nu * K ./ r_analytic;
+    
+    fprintf('  内表面应力: σ_r(r1) = %.4e, σ_θ(r1) = %.4e Pa\n', ...
+            sigma_r_analytic(1), sigma_theta_analytic(1));
+    fprintf('  外表面应力: σ_r(r2) = %.4e, σ_θ(r2) = %.4e Pa\n', ...
+            sigma_r_analytic(end), sigma_theta_analytic(end));
+
+    fprintf('\n--- 有限元分析 ---\n');
+
+    fprintf('  生成网格...\n');
+
+    n_r = 20;
+    n_theta = 40;
+
+    nodes = [];
+    node_id = 1;
+    node_map = zeros(n_r+1, n_theta+1);
+    
+    for i = 0:n_r
+        r = r1 + (r2 - r1) * i/n_r;
+        for j = 0:n_theta
+            theta = pi/2 * j/n_theta;
+            x = r * cos(theta);
+            y = r * sin(theta);
+            nodes(node_id, :) = [x, y];
+            node_map(i+1, j+1) = node_id;
+            node_id = node_id + 1;
+        end
+    end
+    
+    n_nodes = size(nodes, 1);
+
+    elems = [];
+    for i = 1:n_r
+        for j = 1:n_theta
+            node1 = node_map(i, j);
+            node2 = node_map(i+1, j);
+            node3 = node_map(i+1, j+1);
+            node4 = node_map(i, j+1);
+            elems(end+1, :) = [node1, node2, node3, node4];
+        end
+    end
+    
+    n_elems = size(elems, 1);
+    
+    fprintf('  节点数: %d\n', n_nodes);
+    fprintf('  单元数: %d\n', n_elems);
+
+    D = (E/((1+nu)*(1-2*nu))) * [1-nu, nu, 0;
+                                 nu, 1-nu, 0;
+                                 0, 0, (1-2*nu)/2];
+
+    fprintf('\n--- 设置边界条件 ---\n');
+
+    inner_nodes = find(abs(sqrt(nodes(:,1).^2 + nodes(:,2).^2) - r1) < 1e-6);
+    outer_nodes = find(abs(sqrt(nodes(:,1).^2 + nodes(:,2).^2) - r2) < 1e-6);
+
+    sym_x_nodes = find(abs(nodes(:,1)) < 1e-6);
+
+    sym_y_nodes = find(abs(nodes(:,2)) < 1e-6);
+    
+    fprintf('  内表面节点数: %d\n', length(inner_nodes));
+    fprintf('  外表面节点数: %d\n', length(outer_nodes));
+
+    dirichlet_dofs = [];
+    dirichlet_values = [];
+
+    for i = 1:length(inner_nodes)
+        node = inner_nodes(i);
+        x = nodes(node, 1);
+        y = nodes(node, 2);
+        r = sqrt(x^2 + y^2);
+
+        n_r = [x/r, y/r];
+
+        u_r = delta;
+        u_x = u_r * n_r(1);
+        u_y = u_r * n_r(2);
+        
+        dirichlet_dofs = [dirichlet_dofs; node*2-1; node*2];
+        dirichlet_values = [dirichlet_values; u_x; u_y];
+    end
+
+    for i = 1:length(sym_x_nodes)
+        node = sym_x_nodes(i);
+        dirichlet_dofs = [dirichlet_dofs; node*2-1];
+        dirichlet_values = [dirichlet_values; 0];
+    end
+
+    for i = 1:length(sym_y_nodes)
+        node = sym_y_nodes(i);
+        dirichlet_dofs = [dirichlet_dofs; node*2];
+        dirichlet_values = [dirichlet_values; 0];
+    end
+    
+    fprintf('  约束自由度: %d\n', length(dirichlet_dofs));
+
+    fprintf('\n--- 有限元求解 ---\n');
+
+    Q4_shape = @(xi, eta) deal(...
+        0.25 * [(1-xi)*(1-eta); (1+xi)*(1-eta); (1+xi)*(1+eta); (1-xi)*(1+eta)]', ...
+        0.25 * [-(1-eta); (1-eta); (1+eta); -(1+eta)], ...
+        0.25 * [-(1-xi); -(1+xi); (1+xi); (1-xi)]);
+    
+    gauss_points = [-1/sqrt(3), -1/sqrt(3);
+                    1/sqrt(3), -1/sqrt(3);
+                    1/sqrt(3),  1/sqrt(3);
+                   -1/sqrt(3),  1/sqrt(3)];
+    gauss_weights = [1, 1, 1, 1];
+
+    n_dofs = 2 * n_nodes;
+    K = sparse(n_dofs, n_dofs);
+    F = sparse(n_dofs, 1);
+    
+    fprintf('  组装刚度矩阵...\n');
+    
+    for e = 1:n_elems
+        elem_nodes = elems(e, :);
+        node_coords = nodes(elem_nodes, :);
+        
+        Ke = zeros(8, 8);
+        
+        for g = 1:4
+            xi = gauss_points(g, 1);
+            eta = gauss_points(g, 2);
+            
+            [N, dN_dxi, dN_deta] = Q4_shape(xi, eta);
+
+            dx_dxi = dN_dxi' * node_coords(:,1);
+            dy_dxi = dN_dxi' * node_coords(:,2);
+            dx_deta = dN_deta' * node_coords(:,1);
+            dy_deta = dN_deta' * node_coords(:,2);
+            
+            J = [dx_dxi, dy_dxi; dx_deta, dy_deta];
+            detJ = det(J);
+            
+            invJ = inv(J);
+
+            dN_dx = invJ(1,1)*dN_dxi + invJ(1,2)*dN_deta;
+            dN_dy = invJ(2,1)*dN_dxi + invJ(2,2)*dN_deta;
+
+            B = zeros(3, 8);
+            for j = 1:4
+                B(1, 2*j-1) = dN_dx(j);
+                B(2, 2*j)   = dN_dy(j);
+                B(3, 2*j-1) = dN_dy(j);
+                B(3, 2*j)   = dN_dx(j);
+            end
+            
+            Ke = Ke + B' * D * B * detJ * gauss_weights(g);
+        end
+
+        dof_indices = zeros(8, 1);
+        for j = 1:4
+            dof_indices(2*j-1) = 2*elem_nodes(j) - 1;
+            dof_indices(2*j)   = 2*elem_nodes(j);
+        end
+        
+        K(dof_indices, dof_indices) = K(dof_indices, dof_indices) + Ke;
+    end
+
+    penalty = 1e30 * max(max(abs(K(K~=0))));
+    
+    K_mod = K;
+    F_mod = F;
+    
+    for i = 1:length(dirichlet_dofs)
+        dof = dirichlet_dofs(i);
+        value = dirichlet_values(i);
+        
+        K_mod(dof, dof) = penalty;
+        F_mod(dof) = penalty * value;
+
+        for j = 1:n_dofs
+            if j ~= dof
+                F_mod(j) = F_mod(j) - K(j, dof) * value;
+                K_mod(j, dof) = 0;
+                K_mod(dof, j) = 0;
+            end
+        end
+    end
+
+    fprintf('  求解线性系统...\n');
+    U = K_mod \ F_mod;
+    
+    displacements = reshape(U, 2, n_nodes)';
+    Ux = displacements(:, 1);
+    Uy = displacements(:, 2);
+
+    Ur = zeros(n_nodes, 1);
+    Utheta = zeros(n_nodes, 1);
+    for i = 1:n_nodes
+        x = nodes(i, 1);
+        y = nodes(i, 2);
+        r = sqrt(x^2 + y^2);
+        theta = atan2(y, x);
+        
+        Ur(i) = Ux(i)*cos(theta) + Uy(i)*sin(theta);
+        Utheta(i) = -Ux(i)*sin(theta) + Uy(i)*cos(theta);
+    end
+
+    fprintf('  计算单元应力...\n');
+
+    elem_stress = zeros(n_elems, 3);
+    elem_coords = zeros(n_elems, 2);
+    
+    for e = 1:n_elems
+        elem_nodes = elems(e, :);
+        node_coords = nodes(elem_nodes, :);
+        elem_disp = displacements(elem_nodes, :);
+
+        xi = 0; eta = 0;
+        [N, dN_dxi, dN_deta] = Q4_shape(xi, eta);
+
+        x_center = N'.* node_coords(:,1);
+        y_center = N'.* node_coords(:,2);
+        r_center = sqrt(x_center.^2 + y_center.^2);
+        theta_center = atan2(y_center, x_center);
+
+        J = [dN_dxi' * node_coords(:,1), dN_dxi' * node_coords(:,2);
+             dN_deta' * node_coords(:,1), dN_deta' * node_coords(:,2)];
+        invJ = inv(J);
+
+        dN_dx = invJ(1,1)*dN_dxi + invJ(1,2)*dN_deta;
+        dN_dy = invJ(2,1)*dN_dxi + invJ(2,2)*dN_deta;
+
+        B = zeros(3, 8);
+        for j = 1:4
+            B(1, 2*j-1) = dN_dx(j);
+            B(2, 2*j)   = dN_dy(j);
+            B(3, 2*j-1) = dN_dy(j);
+            B(3, 2*j)   = dN_dx(j);
+        end
+
+        u_vec = reshape(elem_disp', 8, 1);
+        strain = B * u_vec;
+
+        stress_global = D * strain;
+
+        stress_global_3x1 = stress_global(1:3);
+        stress_global_12x1 = repmat(stress_global_3x1, 4, 1);
+
+        cos_theta = cos(theta_center);
+        sin_theta = sin(theta_center);
+        
+        T = [cos_theta.^2, sin_theta.^2, 2*sin_theta.*cos_theta;
+             sin_theta.^2, cos_theta.^2, -2*sin_theta.*cos_theta;
+             -sin_theta.*cos_theta, sin_theta.*cos_theta, cos_theta.^2-sin_theta.^2];
+        
+        stress_polar = T .* stress_global_12x1';
+        
+        elem_stress(e, :) = stress_polar';
+        elem_coords(e, :) = [r_center, theta_center];
+    end
+
+    [r_sorted, sort_idx] = sort(elem_coords(:,1));
+    stress_r_sorted = elem_stress(sort_idx, 1);
+    stress_theta_sorted = elem_stress(sort_idx, 2);
+
+    fprintf('\n--- 结果比较 ---\n');
+    
+    r_fem = r_sorted;
+    sigma_r_fem = stress_r_sorted;
+    sigma_theta_fem = stress_theta_sorted;
+
+    L2_error_r = sqrt(trapz(r_analytic, (interp1(r_fem, sigma_r_fem, r_analytic) - sigma_r_analytic).^2));
+    L2_error_theta = sqrt(trapz(r_analytic, (interp1(r_fem, sigma_theta_fem, r_analytic) - sigma_theta_analytic).^2));
+    
+    L2_norm_r = sqrt(trapz(r_analytic, sigma_r_analytic.^2));
+    L2_norm_theta = sqrt(trapz(r_analytic, sigma_theta_analytic.^2));
+    
+    rel_error_r = L2_error_r / L2_norm_r;
+    rel_error_theta = L2_error_theta / L2_norm_theta;
+    
+    fprintf('  径向应力相对误差: %.4f%%\n', rel_error_r*100);
+    fprintf('  环向应力相对误差: %.4f%%\n', rel_error_theta*100);
+
+    fprintf('\n--- 可视化结果 ---\n');
+    
+    figure('Position', [50, 50, 1400, 800], ...
+           'Name', '厚壁圆筒配合分析', 'NumberTitle', 'off');
+    
+    subplot(2, 3, 1);
+    patch('Faces', elems, 'Vertices', nodes, ...
+          'FaceColor', 'none', 'EdgeColor', 'b', 'LineWidth', 0.5);
+    hold on;
+
+    plot(nodes(inner_nodes,1), nodes(inner_nodes,2), 'r.', 'MarkerSize', 15);
+    plot(nodes(outer_nodes,1), nodes(outer_nodes,2), 'g.', 'MarkerSize', 15);
+    
+    title('有限元网格 (1/4对称模型)', 'FontSize', 12, 'FontWeight', 'bold');
+    xlabel('x (m)', 'FontSize', 10); ylabel('y (m)', 'FontSize', 10);
+    axis equal tight; grid on;
+    legend('单元', '内边界', '外边界', 'Location', 'best');
+
+    subplot(2, 3, 2);
+
+    r_nodes = sqrt(nodes(:,1).^2 + nodes(:,2).^2);
+    [r_nodes_sorted, idx] = sort(r_nodes);
+    Ur_sorted = Ur(idx);
+    
+    plot(r_analytic, u_r_analytic, 'b-', 'LineWidth', 2);
+    hold on;
+    plot(r_nodes_sorted, Ur_sorted, 'ro', 'MarkerSize', 4, 'LineWidth', 1);
+    
+    xlabel('半径 r (m)', 'FontSize', 10);
+    ylabel('径向位移 u_r (m)', 'FontSize', 10);
+    title('径向位移分布', 'FontSize', 12, 'FontWeight', 'bold');
+    legend('解析解', '有限元解', 'Location', 'best');
+    grid on;
+
+    subplot(2, 3, 3);
+    plot(r_analytic, sigma_r_analytic/1e6, 'b-', 'LineWidth', 2);
+    hold on;
+    plot(r_fem, sigma_r_fem/1e6, 'ro', 'MarkerSize', 5, 'LineWidth', 1);
+    
+    xlabel('半径 r (m)', 'FontSize', 10);
+    ylabel('径向应力 σ_r (MPa)', 'FontSize', 10);
+    title('径向应力分布', 'FontSize', 12, 'FontWeight', 'bold');
+    legend('解析解', '有限元解', 'Location', 'best');
+    grid on;
+
+    subplot(2, 3, 4);
+    plot(r_analytic, sigma_theta_analytic/1e6, 'b-', 'LineWidth', 2);
+    hold on;
+    plot(r_fem, sigma_theta_fem/1e6, 'ro', 'MarkerSize', 5, 'LineWidth', 1);
+    
+    xlabel('半径 r (m)', 'FontSize', 10);
+    ylabel('环向应力 σ_θ (MPa)', 'FontSize', 10);
+    title('环向应力分布', 'FontSize', 12, 'FontWeight', 'bold');
+    legend('解析解', '有限元解', 'Location', 'best');
+    grid on;
+
+    subplot(2, 3, 5);
+    plot(r_analytic, sigma_z_analytic/1e6, 'b-', 'LineWidth', 2);
+    
+    xlabel('半径 r (m)', 'FontSize', 10);
+    ylabel('轴向应力 σ_z (MPa)', 'FontSize', 10);
+    title('轴向应力分布 (平面应变)', 'FontSize', 12, 'FontWeight', 'bold');
+    grid on;
+
+    subplot(2, 3, 6);
+    
+    sigma_r_fem_interp = interp1(r_fem, sigma_r_fem, r_analytic);
+    sigma_theta_fem_interp = interp1(r_fem, sigma_theta_fem, r_analytic);
+    
+    error_r = abs(sigma_r_fem_interp - sigma_r_analytic) ./ abs(sigma_r_analytic) * 100;
+    error_theta = abs(sigma_theta_fem_interp - sigma_theta_analytic) ./ abs(sigma_theta_analytic) * 100;
+    
+    semilogy(r_analytic, error_r, 'b-', 'LineWidth', 2);
+    hold on;
+    semilogy(r_analytic, error_theta, 'r-', 'LineWidth', 2);
+    
+    xlabel('半径 r (m)', 'FontSize', 10);
+    ylabel('相对误差 (%)', 'FontSize', 10);
+    title('数值解相对误差', 'FontSize', 12, 'FontWeight', 'bold');
+    legend('σ_r 误差', 'σ_θ 误差', 'Location', 'best');
+    grid on;
+    ylim([1e-2, 1e2]);
+
+    saveas(gcf, 'thick_walled_cylinder_results.png');
+    fprintf('  结果图已保存为 thick_walled_cylinder_results.png\n');
+
+    fprintf('\n--- 详细结果 ---\n');
+
+    contact_pressure = -sigma_r_analytic(1);
+    fprintf('  接触压力: %.2f MPa\n', contact_pressure/1e6);
+
+    [max_sigma_theta, max_idx] = max(sigma_theta_analytic);
+    r_max = r_analytic(max_idx);
+    fprintf('  最大环向应力: %.2f MPa (位于 r = %.3f m)\n', max_sigma_theta/1e6, r_max);
+
+    avg_pressure = contact_pressure;
+    hoop_stress_inner = sigma_theta_analytic(1);
+    stress_concentration = hoop_stress_inner / avg_pressure;
+    fprintf('  应力集中系数 (内表面): %.3f\n', stress_concentration);
+
+    fid = fopen('cylinder_analysis_results.txt', 'w');
+    fprintf(fid, '=========================================\n');
+    fprintf(fid, '   厚壁圆筒配合分析报告\n');
+    fprintf(fid, '=========================================\n\n');
+    
+    fprintf(fid, '几何参数:\n');
+    fprintf(fid, '  内半径 r1 = %.3f m\n', r1);
+    fprintf(fid, '  外半径 r2 = %.3f m\n', r2);
+    fprintf(fid, '  过盈量 δ = %.4f m\n', delta);
+    fprintf(fid, '  半径比 r2/r1 = %.2f\n', r2/r1);
+    
+    fprintf(fid, '\n材料参数:\n');
+    fprintf(fid, '  弹性模量 E = %.2e Pa\n', E);
+    fprintf(fid, '  泊松比 ν = %.2f\n', nu);
+    
+    fprintf(fid, '\n解析解常数:\n');
+    fprintf(fid, '  K = %.4e\n', K);
+    
+    fprintf(fid, '\n边界条件:\n');
+    fprintf(fid, '  内表面: u_r(r1) = %.4e m\n', delta);
+    fprintf(fid, '  外表面: σ_r(r2) = 0\n');
+    
+    fprintf(fid, '\n解析解结果:\n');
+    fprintf(fid, '  接触压力: %.2f MPa\n', contact_pressure/1e6);
+    fprintf(fid, '  内表面环向应力: %.2f MPa\n', sigma_theta_analytic(1)/1e6);
+    fprintf(fid, '  外表面环向应力: %.2f MPa\n', sigma_theta_analytic(end)/1e6);
+    fprintf(fid, '  最大环向应力: %.2f MPa (r = %.3f m)\n', max_sigma_theta/1e6, r_max);
+    fprintf(fid, '  应力集中系数: %.3f\n', stress_concentration);
+    
+    fprintf(fid, '\n有限元分析:\n');
+    fprintf(fid, '  节点数: %d\n', n_nodes);
+    fprintf(fid, '  单元数: %d\n', n_elems);
+    fprintf(fid, '  径向单元数: %d\n', n_r);
+    fprintf(fid, '  环向单元数: %d\n', n_theta);
+    
+    fprintf(fid, '\n误差分析:\n');
+    fprintf(fid, '  径向应力相对L2误差: %.4f%%\n', rel_error_r*100);
+    fprintf(fid, '  环向应力相对L2误差: %.4f%%\n', rel_error_theta*100);
+    
+    fprintf(fid, '\n验证结果:\n');
+    if rel_error_r < 0.05 && rel_error_theta < 0.05 
+        fprintf(fid, '  ✓ 有限元解与解析解吻合良好\n');
+        fprintf('  ✓ 有限元解与解析解吻合良好\n');
+    else
+        fprintf(fid, '  ✗ 有限元解与解析解存在显著差异\n');
+        fprintf('  ✗ 有限元解与解析解存在显著差异\n');
+    end
+    
+    fprintf(fid, '\n生成文件:\n');
+    fprintf(fid, '  thick_walled_cylinder_results.png - 结果图\n');
+    fprintf(fid, '  cylinder_analysis_results.txt    - 本报告\n');
+    
+    fprintf(fid, '\n分析完成时间: %s\n', datestr(now));
+    fprintf(fid, '=========================================\n');
+    fclose(fid);
+    
+    fprintf('\n报告已保存为 cylinder_analysis_results.txt\n');
+    
+end
